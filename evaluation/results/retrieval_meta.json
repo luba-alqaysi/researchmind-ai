@@ -1,0 +1,6 @@
+{
+  "date": "2026-11-02",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "questions": 31,
+  "answerable": 27
+}

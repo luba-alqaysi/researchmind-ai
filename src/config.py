@@ -47,7 +47,7 @@ class Settings:
     chunk_size: int = 800
     chunk_overlap: int = 150
     top_k: int = 5
-    min_similarity: float = 0.25
+    min_similarity: float = 0.30
     skip_references: bool = True
     max_context_chars: int = 20000  # cap on evidence text sent to the LLM
 
