@@ -36,13 +36,15 @@ COMPARISON_SYSTEM_PROMPT = SYSTEM_PROMPT + """
 
 For comparison requests, produce a Markdown table with the columns given in the request and one row per aspect. Every cell must either contain claims with source citations or the exact text "Not reported in retrieved text". Only attribute a source to the paper it belongs to (see the document attribute of each source). After the table, add at most three bullet points on the most important differences, also with citations."""
 
+# Retrieval queries are phrased the way papers phrase these things, which matches
+# small embedding models far better than questions such as "What is the objective?".
 COMPARISON_ASPECTS: dict[str, str] = {
-    "Research objective": "What is the main research objective, aim or research question of this study?",
-    "Study design": "What is the overall study design, for example experimental, observational, retrospective, benchmark or simulation?",
-    "Data and sample size": "What datasets, cohorts, samples or subjects were used, and what was the sample size?",
-    "Methodology": "What methods, models, algorithms and statistical analyses were used?",
-    "Main findings": "What are the main results, findings and conclusions of the study?",
-    "Limitations": "What limitations, weaknesses or caveats does the study acknowledge?",
+    "Research objective": "In this study we aim to investigate; the goal of this work is; we propose",
+    "Study design": "Study design: we performed a retrospective, experimental, observational, benchmark or simulation study",
+    "Data and sample size": "We used datasets, cohorts, patients, samples and subjects; the sample size was n =",
+    "Methodology": "Methods: we applied models, algorithms, statistical tests and analysis pipelines",
+    "Main findings": "Our results show; we found that; the main findings and conclusions are",
+    "Limitations": "Limitations of this study include; a limitation is; future work should",
 }
 
 _TAG_LIKE = re.compile(r"<\s*/?\s*(sources?|system|instructions?|user|assistant)\b[^>]*>?", re.I)

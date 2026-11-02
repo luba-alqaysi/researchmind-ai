@@ -62,6 +62,8 @@ class LLMClient(Protocol):
     def generate(self, system: str, user: str) -> LLMResponse: ...
 
 
+MAX_OLLAMA_CTX = 32768  # upper bound to keep memory use reasonable on a laptop
+
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S | re.I)
 
 
@@ -77,14 +79,27 @@ class OllamaClient:
         self.max_tokens = settings.llm_max_tokens
         self.timeout = settings.llm_timeout_seconds
 
+    def context_size(self, system: str, user: str) -> int:
+        """Context window large enough for the prompt plus the answer.
+
+        If prompt + answer exceed num_ctx, Ollama silently drops the *start* of the
+        prompt (the instructions and the first sources). Scientific text averages
+        roughly 3-4 characters per token; 3 is used as a conservative estimate.
+        """
+        needed = (len(system) + len(user)) // 3 + self.max_tokens + 256
+        size = max(self.num_ctx, -(-needed // 2048) * 2048)  # round up to a multiple of 2048
+        return min(size, MAX_OLLAMA_CTX)
+
     def generate(self, system: str, user: str) -> LLMResponse:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "stream": False,
-            # Ollama's default context window is small and silently truncates long
-            # prompts, which would drop retrieved evidence. Always set it explicitly.
-            "options": {"temperature": self.temperature, "num_ctx": self.num_ctx, "num_predict": self.max_tokens},
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.context_size(system, user),
+                "num_predict": self.max_tokens,
+            },
         }
         try:
             response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)

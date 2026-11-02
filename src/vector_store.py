@@ -65,6 +65,10 @@ class VectorStore:
     def doc_ids(self) -> set[str]:
         return {c.doc_id for c in self.chunks}
 
+    def similarity(self, position: int, query_vector: np.ndarray) -> float:
+        """Cosine similarity between a stored vector and a query vector."""
+        return float(self._vectors[position] @ np.asarray(query_vector, dtype="float32").ravel())
+
     def search(self, query_vector: np.ndarray, k: int = 5, doc_ids: set[str] | None = None) -> list[RetrievedChunk]:
         """Return the top-k chunks by cosine similarity, optionally within selected documents.
 

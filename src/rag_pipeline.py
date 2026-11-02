@@ -209,6 +209,25 @@ class RAGPipeline:
         )
 
     # ------------------------------------------------------------ comparison
+    def _abstract_chunks(self, doc_id: str, query_vectors, max_chunks: int = 2) -> list[RetrievedChunk]:
+        """Chunks from the abstract (heuristic: the first early chunk mentioning 'abstract',
+        otherwise the first chunks of the document), scored by their best similarity to
+        any of the comparison queries."""
+        positions = [i for i, c in enumerate(self.store.chunks) if c.doc_id == doc_id]
+        start = next(
+            (j for j, i in enumerate(positions)
+             if self.store.chunks[i].page_number <= 3 and "abstract" in self.store.chunks[i].text.lower()),
+            0,
+        )
+        return [
+            RetrievedChunk(
+                chunk=self.store.chunks[i],
+                score=max(self.store.similarity(i, v) for v in query_vectors),
+                rank=0,
+            )
+            for i in positions[start:start + max_chunks]
+        ]
+
     def compare(self, doc_a: str, doc_b: str, llm: LLMClient, per_aspect_k: int = 2) -> RAGAnswer:
         """Structured comparison of two documents across fixed research aspects."""
         if doc_a == doc_b:
@@ -218,8 +237,12 @@ class RAGPipeline:
 
         t0 = time.perf_counter()
         seen: dict[str, RetrievedChunk] = {}
-        for query in COMPARISON_ASPECTS.values():
-            vector = self.embedder.embed_query(query)
+        # The abstract summarises objective, design, data and findings, so always include it.
+        vectors = [self.embedder.embed_query(q) for q in COMPARISON_ASPECTS.values()]
+        for doc_id in (doc_a, doc_b):
+            for r in self._abstract_chunks(doc_id, vectors):
+                seen[r.chunk.chunk_id] = r
+        for vector in vectors:
             for doc_id in (doc_a, doc_b):
                 for r in self.store.search(vector, per_aspect_k, doc_ids={doc_id}):
                     if r.chunk.chunk_id not in seen or r.score > seen[r.chunk.chunk_id].score:

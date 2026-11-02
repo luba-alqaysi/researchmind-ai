@@ -94,9 +94,8 @@ def render_answer(answer: RAGAnswer) -> None:
         st.caption(f":orange[⚠ {warning}]")
 
     if answer.citations:
-        chips = "".join(
-            f'<span class="rm-chip">{html.escape(c.label)}</span>' for c in answer.citations
-        )
+        labels = list(dict.fromkeys(c.label for c in answer.citations))  # same page cited twice -> one chip
+        chips = "".join(f'<span class="rm-chip">{html.escape(label)}</span>' for label in labels)
         st.markdown(f"<div><span class='rm-meta'>Sources cited:</span><br>{chips}</div>", unsafe_allow_html=True)
         for c in answer.citations:
             with st.expander(f"{c.source_id} · {c.doc_name}, page {c.page_number} · similarity {c.score:.2f}"):
@@ -154,16 +153,15 @@ def sidebar(pipeline: RAGPipeline, settings: Settings) -> dict:
             st.caption("No documents indexed yet.")
         else:
             for doc_id, info in list(pipeline.documents.items()):
-                col1, col2 = st.columns([5, 1])
-                col1.markdown(
+                st.markdown(
                     f"**{html.escape(info.doc_name)}**<br><span class='rm-meta'>{info.page_count} pages · "
                     f"{info.chunk_count} chunks</span>", unsafe_allow_html=True,
                 )
-                if col2.button("✕", key=f"rm_{doc_id}", help=f"Remove {info.doc_name}"):
+                for w in info.warnings:
+                    st.caption(f":orange[{w}]")
+                if st.button("Remove", key=f"rm_{doc_id}", type="tertiary", help=f"Remove {info.doc_name}"):
                     pipeline.remove_document(doc_id)
                     st.rerun()
-                for w in info.warnings:
-                    col1.caption(f":orange[{w}]")
             names = {info.doc_name: doc_id for doc_id, info in pipeline.documents.items()}
             chosen = st.multiselect("Search in", list(names), placeholder="All documents")
             selected = {names[n] for n in chosen} or None

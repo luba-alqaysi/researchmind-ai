@@ -120,3 +120,12 @@ def test_haiku_has_no_fallback_parameter():
     with patch.object(client.client.beta.messages, "create", return_value=fake) as create:
         client.generate("s", "u")
     assert "fallbacks" not in create.call_args.kwargs
+
+
+def test_ollama_context_grows_with_prompt_so_evidence_is_not_truncated():
+    client = OllamaClient(Settings(ollama_num_ctx=8192, llm_max_tokens=2000))
+    assert client.context_size("sys", "short question") == 8192
+    big = "x" * 24 * 800  # e.g. a comparison prompt with 24 passages
+    size = client.context_size("s" * 3000, big)
+    assert size >= (3000 + len(big)) // 3 + 2000 and size % 2048 == 0
+    assert client.context_size("s", "x" * 10_000_000) == 32768

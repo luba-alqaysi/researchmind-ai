@@ -126,6 +126,7 @@ def test_compare_uses_both_documents(pipeline):
     answer = pipeline.compare(ids[0], ids[1], llm)
     assert {r.chunk.doc_id for r in answer.retrieved} == set(ids)
     assert "Paper A" in llm.calls[0][1] and answer.citations
+    assert all(-1.0 <= r.score <= 1.0 for r in answer.retrieved)
     with pytest.raises(ValueError):
         pipeline.compare(ids[0], ids[0], llm)
 
