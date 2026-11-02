@@ -36,9 +36,10 @@ class Settings:
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     anthropic_api_key: str = ""
-    claude_model: str = "claude-sonnet-5-5"
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = "medium"
     llm_temperature: float = 0.1
-    llm_max_tokens: int = 1200
+    llm_max_tokens: int = 2000
     llm_timeout_seconds: int = 180
 
     # Retrieval
@@ -48,6 +49,7 @@ class Settings:
     top_k: int = 5
     min_similarity: float = 0.25
     skip_references: bool = True
+    max_context_chars: int = 20000  # cap on evidence text sent to the LLM
 
     @classmethod
     def from_env(cls, dotenv: bool = True) -> "Settings":
@@ -66,6 +68,7 @@ class Settings:
             gemini_model=_get("GEMINI_MODEL", d.gemini_model),
             anthropic_api_key=_get("ANTHROPIC_API_KEY", ""),
             claude_model=_get("CLAUDE_MODEL", d.claude_model),
+            claude_effort=_get("CLAUDE_EFFORT", d.claude_effort).lower(),
             llm_temperature=float(_get("LLM_TEMPERATURE", str(d.llm_temperature))),
             llm_max_tokens=int(_get("LLM_MAX_TOKENS", str(d.llm_max_tokens))),
             llm_timeout_seconds=int(_get("LLM_TIMEOUT_SECONDS", str(d.llm_timeout_seconds))),
@@ -75,6 +78,7 @@ class Settings:
             top_k=int(_get("TOP_K", str(d.top_k))),
             min_similarity=float(_get("MIN_SIMILARITY", str(d.min_similarity))),
             skip_references=_get_bool("SKIP_REFERENCES", d.skip_references),
+            max_context_chars=int(_get("MAX_CONTEXT_CHARS", str(d.max_context_chars))),
         )
 
     def with_overrides(self, **kwargs) -> "Settings":

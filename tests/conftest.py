@@ -53,7 +53,7 @@ class FakeEmbedder:
 
     def _vec(self, text: str) -> np.ndarray:
         v = np.zeros(self.dim, dtype="float32")
-        for token in text.lower().replace(".", " ").replace(",", " ").split():
+        for token in text.lower().replace(".", " ").replace(",", " ").replace("?", " ").split():
             v[hash(token) % self.dim] += 1.0
         norm = np.linalg.norm(v)
         return v / norm if norm else v
