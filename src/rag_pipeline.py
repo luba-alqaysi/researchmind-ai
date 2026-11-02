@@ -109,7 +109,7 @@ class RAGPipeline:
         query = self.embedder.embed_query(question)
         results = self.store.search(query, k, doc_ids=doc_ids)
         scope = doc_ids or self.store.doc_ids
-        if len(scope) > 1:
+        if self.settings.balance_documents and len(scope) > 1:
             present = {r.chunk.doc_id for r in results}
             for doc_id in scope - present:
                 best = self.store.search(query, 1, doc_ids={doc_id})

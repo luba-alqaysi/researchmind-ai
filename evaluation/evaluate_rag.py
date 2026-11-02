@@ -114,6 +114,7 @@ def run_retrieval(args) -> None:
     embedder = Embedder(base.embedding_model)
     rows, per_question = [], []
     skip_options = {"on": [True], "off": [False], "both": [True, False]}[args.skip_references]
+    balance_options = {"on": [True], "off": [False], "both": [True, False]}[args.balance]
 
     for chunk_size in args.chunk_sizes:
         for overlap in args.overlaps:
@@ -124,7 +125,8 @@ def run_retrieval(args) -> None:
                 t0 = time.perf_counter()
                 pipeline = build_pipeline(settings, embedder)
                 index_s = time.perf_counter() - t0
-                for k in args.top_k:
+                for balance, k in [(b, k) for b in balance_options for k in args.top_k]:
+                    pipeline.settings = settings.with_overrides(balance_documents=balance)
                     metrics, latencies = [], []
                     for row in questions.itertuples():
                         t1 = time.perf_counter()
@@ -132,12 +134,13 @@ def run_retrieval(args) -> None:
                         latencies.append((time.perf_counter() - t1) * 1000)
                         m = retrieval_metrics(row, retrieved) if row.answerable else {"top_score": retrieved[0].score}
                         m.update(id=row.id, type=row.type, answerable=row.answerable, chunk_size=chunk_size,
-                                 overlap=overlap, skip_references=skip, top_k=k, n_retrieved=len(retrieved))
+                                 overlap=overlap, skip_references=skip, balance=balance, top_k=k,
+                                 n_retrieved=len(retrieved))
                         metrics.append(m)
                     m = pd.DataFrame(metrics)
                     a = m[m.answerable]
                     rows.append({
-                        "chunk_size": chunk_size, "overlap": overlap, "skip_refs": skip, "top_k": k,
+                        "chunk_size": chunk_size, "overlap": overlap, "skip_refs": skip, "balance": balance, "top_k": k,
                         "chunks": len(pipeline.store), "page_hit@k": a.page_hit.mean(),
                         "phrase_hit@k": a.phrase_hit.mean(), "MRR": a.rr.mean(),
                         "xdoc_coverage": a[a.type == "cross_document"].doc_coverage.mean(),
@@ -146,7 +149,7 @@ def run_retrieval(args) -> None:
                     })
                     per_question.append(m)
                     r = rows[-1]
-                    print(f"size={chunk_size:5d} overlap={overlap:4d} skip_refs={skip!s:5} k={k:2d} | "
+                    print(f"size={chunk_size:5d} overlap={overlap:4d} skip_refs={skip!s:5} balance={balance!s:5} k={k:2d} | "
                           f"page_hit={r['page_hit@k']:.3f} phrase_hit={r['phrase_hit@k']:.3f} MRR={r['MRR']:.3f}")
 
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -157,7 +160,8 @@ def run_retrieval(args) -> None:
 
     # Threshold calibration at the default configuration.
     d = pq[(pq.chunk_size == base.chunk_size) & (pq.overlap == base.chunk_overlap)
-           & (pq.skip_references == base.skip_references) & (pq.top_k == base.top_k)]
+           & (pq.skip_references == base.skip_references) & (pq.balance == base.balance_documents)
+           & (pq.top_k == base.top_k)]
     if not d.empty:
         calib = []
         for t in np.round(np.arange(0.15, 0.51, 0.05), 2):
@@ -215,6 +219,7 @@ def run_generation(args) -> None:
         chunk_size=args.chunk_size or base.chunk_size,
         chunk_overlap=args.overlap if args.overlap is not None else base.chunk_overlap,
         top_k=args.top_k or base.top_k,
+        balance_documents=base.balance_documents and not args.no_balance,
     )
     llm = get_llm_client(args.provider, settings, model=args.model)
     judge = get_llm_client(args.judge, settings, model=args.judge_model) if args.judge != "none" else None
@@ -264,7 +269,8 @@ def run_generation(args) -> None:
               f"correctness={record.get('correctness', '-')} gen={(gen or 0) / 1000:.1f}s")
 
     df = pd.DataFrame(records)
-    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}")
+    suffix = "" if settings.balance_documents else "_nobalance"
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}{suffix}")
     RESULTS_DIR.mkdir(exist_ok=True)
     df.to_csv(RESULTS_DIR / f"generation_{tag}_raw.csv", index=False)  # gitignored (contains paper text)
 
@@ -274,7 +280,7 @@ def run_generation(args) -> None:
         "date": dt.date.today().isoformat(), "provider": llm.provider, "model": llm.model,
         "judge": f"{judge.provider}/{judge.model}" if judge else "none",
         "chunk_size": settings.chunk_size, "overlap": settings.chunk_overlap, "top_k": settings.top_k,
-        "min_similarity": settings.min_similarity,
+        "balance_documents": settings.balance_documents, "min_similarity": settings.min_similarity,
         "questions": int(len(df)), "errors": int(len(df) - len(ok)),
         "answerable": int(len(a)), "unanswerable": int(len(u)),
         "page_hit@k": float(a.page_hit.mean()) if len(a) else None,
@@ -331,12 +337,12 @@ def write_report() -> None:
             "* **avg_passages**: passages returned (top-k plus the per-document guarantee for multi-paper scope).",
             "",
         ]
-        shown = grid.drop(columns=["index_s"]).sort_values(["top_k", "chunk_size", "overlap", "skip_refs"])
+        shown = grid.drop(columns=["index_s"]).sort_values(["top_k", "chunk_size", "overlap", "skip_refs", "balance"])
         parts += [md_table(shown.rename(columns={"retrieval_ms_p50": "ms_p50"})), ""]
         best = grid.sort_values(["phrase_hit@k", "MRR"], ascending=False).iloc[0]
         parts += [
             f"Best configuration by phrase_hit@k then MRR: chunk size {int(best.chunk_size)}, overlap "
-            f"{int(best.overlap)}, skip_refs={bool(best.skip_refs)}, top-k {int(best.top_k)} "
+            f"{int(best.overlap)}, skip_refs={bool(best.skip_refs)}, balance={bool(best.balance)}, top-k {int(best.top_k)} "
             f"(phrase_hit@k {best['phrase_hit@k']:.3f}, MRR {best.MRR:.3f}).",
             "",
         ]
@@ -389,6 +395,8 @@ def main() -> None:
     r.add_argument("--overlaps", type=int, nargs="+", default=[0, 150])
     r.add_argument("--top-k", type=int, nargs="+", default=[3, 5, 8])
     r.add_argument("--skip-references", choices=["on", "off", "both"], default="both")
+    r.add_argument("--balance", choices=["on", "off", "both"], default="both",
+                   help="per-document passage guarantee for multi-document scope")
 
     g = sub.add_parser("generation", help="end-to-end RAG with an LLM")
     g.add_argument("--provider", default="ollama", choices=["ollama", "gemini", "claude", "extractive"])
@@ -398,6 +406,7 @@ def main() -> None:
     g.add_argument("--chunk-size", type=int, default=None)
     g.add_argument("--overlap", type=int, default=None)
     g.add_argument("--top-k", type=int, default=None)
+    g.add_argument("--no-balance", action="store_true", help="disable the per-document passage guarantee")
     g.add_argument("--limit", type=int, default=None, help="only the first N questions (smoke test)")
 
     sub.add_parser("report", help="rebuild RESULTS.md")

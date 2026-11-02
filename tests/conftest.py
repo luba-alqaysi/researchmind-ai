@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import zlib
+
 import numpy as np
 import pymupdf
 import pytest
@@ -47,14 +49,14 @@ def two_page_pdf() -> bytes:
 class FakeEmbedder:
     """Deterministic bag-of-words embedder so retrieval tests run without a model download."""
 
-    def __init__(self, dim: int = 256):
+    def __init__(self, dim: int = 2048):
         self.dim = dim
         self.model_name = "fake-bow"
 
     def _vec(self, text: str) -> np.ndarray:
         v = np.zeros(self.dim, dtype="float32")
         for token in text.lower().replace(".", " ").replace(",", " ").replace("?", " ").split():
-            v[hash(token) % self.dim] += 1.0
+            v[zlib.crc32(token.encode()) % self.dim] += 1.0  # stable across processes
         norm = np.linalg.norm(v)
         return v / norm if norm else v
 

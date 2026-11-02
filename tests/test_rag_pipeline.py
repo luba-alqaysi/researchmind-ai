@@ -128,3 +128,9 @@ def test_compare_uses_both_documents(pipeline):
     assert "Paper A" in llm.calls[0][1] and answer.citations
     with pytest.raises(ValueError):
         pipeline.compare(ids[0], ids[0], llm)
+
+
+def test_document_balancing_can_be_disabled(pipeline):
+    pipeline.settings = pipeline.settings.with_overrides(balance_documents=False)
+    answer = pipeline.ask("Which samples were collected from mice for sequencing?", FakeLLM("x [S1]"), top_k=1)
+    assert len(answer.retrieved) == 1

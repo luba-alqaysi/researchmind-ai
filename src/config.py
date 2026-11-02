@@ -49,6 +49,9 @@ class Settings:
     top_k: int = 5
     min_similarity: float = 0.30
     skip_references: bool = True
+    # With several documents in scope, give each document whose best chunk clears
+    # min_similarity at least one slot (helps cross-document questions).
+    balance_documents: bool = True
     max_context_chars: int = 20000  # cap on evidence text sent to the LLM
 
     @classmethod
@@ -78,6 +81,7 @@ class Settings:
             top_k=int(_get("TOP_K", str(d.top_k))),
             min_similarity=float(_get("MIN_SIMILARITY", str(d.min_similarity))),
             skip_references=_get_bool("SKIP_REFERENCES", d.skip_references),
+            balance_documents=_get_bool("BALANCE_DOCUMENTS", d.balance_documents),
             max_context_chars=int(_get("MAX_CONTEXT_CHARS", str(d.max_context_chars))),
         )
 
