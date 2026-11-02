@@ -1,0 +1,11 @@
+[project]
+name = "researchmind-ai"
+version = "0.1.0"
+description = "Scientific research assistant powered by Retrieval-Augmented Generation"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = ["slow: downloads/loads the real embedding model"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
