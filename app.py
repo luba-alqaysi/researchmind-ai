@@ -2,14 +2,12 @@
 
 This file contains only UI code. All document processing, retrieval and
 generation logic lives in ``src/`` and is shared with the tests and the
-evaluation script.
+evaluation script; HTML building blocks live in ``ui/``.
 
 Run with:  streamlit run app.py
 """
 
 from __future__ import annotations
-
-import html
 
 import src  # noqa: F401  (sets the macOS OpenMP workaround before torch/faiss load)
 import streamlit as st
@@ -17,49 +15,44 @@ import streamlit as st
 from src.config import Settings
 from src.embeddings import Embedder
 from src.llm_client import LLMError, get_llm_client, ollama_status
+from src.query_rewriter import detect_language
 from src.rag_pipeline import RAGPipeline
 from src.reranker import get_reranker
+from src.sample_papers import PAPERS, ensure_downloaded
 from src.schemas import RAGAnswer
+from ui import benchmarks
+from ui.components import (
+    LEDE,
+    PROVIDER_LABELS,
+    answer_html,
+    esc,
+    hero_html,
+    paper_html,
+    refusal_html,
+    refused_before_llm,
+    sources_html,
+    trace_html,
+)
+from ui.style import CSS
 
 st.set_page_config(page_title="ResearchMind AI", page_icon=":material/menu_book:", layout="wide")
 
-PROVIDER_LABELS = {
-    "ollama": "Ollama (local)",
-    "gemini": "Google Gemini",
-    "claude": "Anthropic Claude",
-    "extractive": "No LLM (passages only)",
-}
 EXAMPLE_QUESTIONS = [
-    "What are the main findings of this paper?",
-    "What methodology and data were used?",
+    "What are the main findings?",
+    "Which methods and data were used?",
     "What are the limitations of the study?",
-    "Which statistical methods were applied?",
+    "ما حجم العينة في هذه الدراسة؟",
 ]
-
-CSS = """
-<style>
-h1, h2, h3 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -0.01em; }
-.block-container { padding-top: 2rem; max-width: 1100px; }
-.rm-subtitle { color: #5a5a5a; margin-top: -0.6rem; margin-bottom: 1.2rem; }
-.rm-chip { display: inline-block; padding: 0.15rem 0.55rem; margin: 0 0.35rem 0.35rem 0;
-           border: 1px solid #d5d1c7; border-radius: 999px; font-size: 0.82rem;
-           background: #f6f4ef; color: #1f4e79; }
-.rm-excerpt { border-left: 3px solid #1f4e79; padding: 0.4rem 0.8rem; background: #f6f4ef;
-              font-size: 0.9rem; line-height: 1.5; color: #333; white-space: pre-wrap; }
-.rm-meta { color: #777; font-size: 0.8rem; }
-.rm-step { padding: 0.9rem 1rem; border: 1px solid #e3e0d8; border-radius: 8px; background: #fff; height: 100%; }
-.rm-step b { color: #1f4e79; }
-</style>
-"""
+HISTORY_TURNS = 2  # earlier turns passed to the pipeline for follow-up questions
 
 
 # ----------------------------------------------------------------- resources
-@st.cache_resource(show_spinner="Loading the embedding model (first run downloads ~90 MB)…")
+@st.cache_resource(show_spinner="Loading the embedding model (first run downloads about 90 MB)…")
 def load_embedder(model_name: str) -> Embedder:
     return Embedder(model_name)
 
 
-@st.cache_resource(show_spinner="Loading the reranker model (first run downloads it)…")
+@st.cache_resource(show_spinner="Loading the reranking models (first run downloads them)…")
 def load_reranker(name: str):
     return get_reranker(name)
 
@@ -81,150 +74,140 @@ def get_pipeline() -> RAGPipeline:
 
 
 def init_state() -> None:
-    st.session_state.setdefault("history", [])  # list[RAGAnswer | dict(error)]
+    st.session_state.setdefault("history", [])  # list[RAGAnswer | dict(question, error)]
     st.session_state.setdefault("uploader_key", 0)
     st.session_state.setdefault("ingest_log", [])
     st.session_state.setdefault("comparison", None)
 
 
-# ------------------------------------------------------------------- helpers
-def escape_md(text: str) -> str:
-    """Stop '$' in scientific text from being rendered as LaTeX."""
-    return text.replace("$", r"\$")
+def html_block(markup: str) -> None:
+    st.markdown(markup, unsafe_allow_html=True)
 
 
-def excerpt_html(text: str) -> str:
-    return f'<div class="rm-excerpt">{html.escape(text)}</div>'
+# ------------------------------------------------------------------- actions
+def ingest_files(pipeline: RAGPipeline, files: list[tuple[str, bytes]], label: str) -> None:
+    log = []
+    with st.status(label, expanded=True) as status:
+        for name, data in files:
+            st.write(f"Reading {name}")
+            log.append(pipeline.ingest_pdf(data, name))
+        n_ok = sum(r.ok for r in log)
+        status.update(label=f"Added {n_ok} of {len(log)} paper{'s' if len(log) != 1 else ''}",
+                      state="complete", expanded=False)
+    st.session_state.ingest_log = log
 
 
-def render_answer(answer: RAGAnswer) -> None:
-    st.markdown(escape_md(answer.answer))
-    for warning in answer.warnings:
-        st.caption(f":orange[⚠ {warning}]")
+def load_sample_papers(pipeline: RAGPipeline) -> None:
+    try:
+        with st.spinner("Downloading 4 open-access papers from arXiv (first time only)…"):
+            paths = ensure_downloaded(pause_s=1.0)
+    except Exception as exc:  # network errors, arXiv changes
+        st.error(f"Could not download the sample papers: {exc}. Check your internet connection, or add your own "
+                 "PDFs in the sidebar.")
+        return
+    ingest_files(pipeline, [(p.name, p.read_bytes()) for p in paths], "Adding the sample papers…")
+    st.rerun()
 
-    if answer.citations:
-        labels = list(dict.fromkeys(c.label for c in answer.citations))  # same page cited twice -> one chip
-        chips = "".join(f'<span class="rm-chip">{html.escape(label)}</span>' for label in labels)
-        st.markdown(f"<div><span class='rm-meta'>Sources cited:</span><br>{chips}</div>", unsafe_allow_html=True)
-        for c in answer.citations:
-            with st.expander(f"{c.source_id} · {c.doc_name}, page {c.page_number} · similarity {c.score:.2f}"):
-                st.markdown(excerpt_html(c.excerpt), unsafe_allow_html=True)
 
-    if answer.retrieved:
-        with st.expander(f"All retrieved passages ({len(answer.retrieved)})"):
-            for i, r in enumerate(answer.retrieved, start=1):
-                st.markdown(
-                    f"<span class='rm-meta'>S{i} · <b>{html.escape(r.chunk.doc_name)}</b>, page "
-                    f"{r.chunk.page_number} · similarity {r.score:.2f}</span>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(excerpt_html(r.chunk.text), unsafe_allow_html=True)
-
-    t = answer.timings
-    parts = [f"{PROVIDER_LABELS.get(answer.provider, answer.provider)} · {answer.model}"]
-    if "retrieval_ms" in t:
-        parts.append(f"retrieval {t['retrieval_ms']:.0f} ms")
-    if "generation_ms" in t:
-        parts.append(f"generation {t['generation_ms'] / 1000:.1f} s")
-    st.markdown(f"<span class='rm-meta'>{' · '.join(parts)}</span>", unsafe_allow_html=True)
+def run_question(pipeline: RAGPipeline, settings: Settings, opts: dict, question: str) -> None:
+    previous = [h for h in st.session_state.history if isinstance(h, RAGAnswer)][-HISTORY_TURNS:]
+    history = [(h.question, h.raw_answer or h.answer) for h in previous]
+    try:
+        llm = get_llm_client(opts["provider"], settings, model=opts["model"])
+        with st.spinner("Finding evidence and writing the answer…"):
+            answer = pipeline.ask(question, llm, doc_ids=opts["doc_ids"], top_k=opts["top_k"], history=history)
+        st.session_state.history.append(answer)
+    except (LLMError, ValueError) as exc:
+        st.session_state.history.append({"question": question, "error": str(exc)})
 
 
 # ------------------------------------------------------------------- sidebar
+def retrieval_summary(settings: Settings) -> str:
+    ranked, gated = settings.reranker != "none", settings.rerank_gate != "none"
+    if not ranked and not gated:
+        return (f"Passages are ranked by embedding similarity. Questions whose best passage scores below "
+                f"{settings.min_similarity:.2f} are not sent to the language model.")
+    judge = settings.rerank_gate if gated else settings.reranker
+    text = f"The {settings.reranker} reranker orders the passages. " if ranked else ""
+    return text + (f"The {judge} model checks the evidence; below a relevance of {settings.rerank_min_score:.2f} "
+                   "nothing is sent to the language model.")
+
+
 def sidebar(pipeline: RAGPipeline, settings: Settings) -> dict:
     with st.sidebar:
-        st.markdown("## ResearchMind AI")
-        st.caption("Ask questions about scientific papers and get answers grounded in cited passages.")
+        html_block('<div class="rm-wordmark">ResearchMind</div>'
+                   '<div class="rm-wordmark-sub">Answers from your papers, with the page for every claim.</div>')
 
-        st.markdown("#### 1 · Upload papers")
+        html_block('<div class="rm-side-h">Your papers</div>')
         files = st.file_uploader(
-            "PDF files", type=["pdf"], accept_multiple_files=True,
+            "Add PDF files", type=["pdf"], accept_multiple_files=True,
             key=f"uploader_{st.session_state.uploader_key}", label_visibility="collapsed",
         )
-        if st.button("Process documents", type="primary", disabled=not files, width="stretch"):
-            log = []
-            with st.status("Processing documents…", expanded=True) as status:
-                for f in files:
-                    st.write(f"Reading **{f.name}**…")
-                    log.append(pipeline.ingest_pdf(f.getvalue(), f.name))
-                n_ok = sum(r.ok for r in log)
-                status.update(label=f"Indexed {n_ok} of {len(log)} file(s)", state="complete", expanded=False)
-            st.session_state.ingest_log = log
+        if st.button("Add papers", type="primary", disabled=not files, width="stretch"):
+            ingest_files(pipeline, [(f.name, f.getvalue()) for f in files], "Adding papers…")
             st.session_state.uploader_key += 1  # reset the uploader
             st.rerun()
 
         for r in st.session_state.ingest_log:
-            icon = {"indexed": "✅", "duplicate": "↺"}.get(r.status, "⚠️")
-            st.caption(f"{icon} **{r.file_name}** — {r.message}")
+            if not r.ok:
+                st.caption(f":orange[{r.file_name}: {r.message}]")
 
-        st.markdown("#### 2 · Your library")
         selected: set[str] | None = None
-        if not pipeline.documents:
-            st.caption("No documents indexed yet.")
-        else:
-            for doc_id, info in list(pipeline.documents.items()):
-                st.markdown(
-                    f"**{html.escape(info.doc_name)}**<br><span class='rm-meta'>{info.page_count} pages · "
-                    f"{info.chunk_count} chunks</span>", unsafe_allow_html=True,
-                )
-                for w in info.warnings:
-                    st.caption(f":orange[{w}]")
-                if st.button("Remove", key=f"rm_{doc_id}", type="tertiary", help=f"Remove {info.doc_name}"):
-                    pipeline.remove_document(doc_id)
-                    st.rerun()
+        if pipeline.documents:
+            with st.container(key="rm-papers", gap="small"):
+                for doc_id, info in list(pipeline.documents.items()):
+                    html_block(paper_html(info.doc_name, info.page_count, info.chunk_count))
+                    for w in info.warnings:
+                        st.caption(f":orange[{w}]")
+                    if st.button("Remove", key=f"rm_{doc_id}", type="tertiary", help=f"Remove {info.doc_name}"):
+                        pipeline.remove_document(doc_id)
+                        st.rerun()
             names = {info.doc_name: doc_id for doc_id, info in pipeline.documents.items()}
-            chosen = st.multiselect("Search in", list(names), placeholder="All documents")
-            selected = {names[n] for n in chosen} or None
-            if st.button("Clear all documents", width="stretch"):
+            if len(names) > 1:
+                chosen = st.multiselect("Search in", list(names), placeholder="All papers")
+                selected = {names[n] for n in chosen} or None
+            if st.button("Remove all papers", width="stretch"):
                 pipeline.clear()
                 st.session_state.history = []
                 st.session_state.ingest_log = []
                 st.session_state.comparison = None
                 st.rerun()
+        else:
+            st.caption("Add text-based PDFs, or load the sample papers from the main screen.")
 
-        st.markdown("#### 3 · Model")
-        providers = list(PROVIDER_LABELS)
-        provider = st.selectbox(
-            "LLM provider", providers, index=providers.index(settings.llm_provider),
-            format_func=PROVIDER_LABELS.get,
-        )
-        model = settings.model_for(provider)
-        if provider == "ollama":
-            reachable, models = ollama_status(settings.ollama_base_url)
-            if reachable and models:
-                index = models.index(model) if model in models else 0
-                model = st.selectbox("Ollama model", models, index=index)
-                st.caption(":green[● Ollama is running]")
-            elif reachable:
-                st.caption(f":orange[● Ollama is running but has no models. Run `ollama pull {model}`.]")
-            else:
-                st.caption(":red[● Ollama is not reachable. Start the Ollama app.]")
-        elif provider == "gemini":
-            model = st.text_input("Gemini model", value=model)
-            st.caption(":green[● API key found]" if settings.gemini_api_key else ":red[● GEMINI_API_KEY missing in .env]")
-        elif provider == "claude":
-            options = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
-            if model not in options:
-                options.insert(0, model)
-            model = st.selectbox("Claude model", options, index=options.index(model))
-            st.caption(":green[● API key found]" if settings.anthropic_api_key else ":red[● ANTHROPIC_API_KEY missing in .env]")
-
-        with st.expander("Retrieval settings"):
-            top_k = st.slider("Passages to retrieve (top-k)", 1, 10, settings.top_k)
-            ranked = settings.reranker != "none"
-            gated = settings.rerank_gate != "none"
-            if not ranked and not gated:
-                check = f"Questions whose best match scores below {settings.min_similarity:.2f}"
-            else:
-                judge = settings.rerank_gate if gated else settings.reranker
-                check = (f"Passages are reranked with the {settings.reranker} reranker. " if ranked else "")
-                check += (f"The {judge} model judges relevance; questions whose best "
-                          f"passage relevance is below {settings.rerank_min_score:.2f}")
-            st.caption(
-                f"Chunk size {settings.chunk_size} chars, overlap {settings.chunk_overlap}. "
-                f"{check} are answered with 'insufficient evidence' without calling the LLM."
+        with st.expander("Model and retrieval"):
+            providers = list(PROVIDER_LABELS)
+            provider = st.selectbox(
+                "Language model", providers, index=providers.index(settings.llm_provider),
+                format_func=PROVIDER_LABELS.get,
             )
+            model = settings.model_for(provider)
+            if provider == "ollama":
+                reachable, models = ollama_status(settings.ollama_base_url)
+                if reachable and models:
+                    index = models.index(model) if model in models else 0
+                    model = st.selectbox("Ollama model", models, index=index)
+                    st.caption(":green[Ollama is running]")
+                elif reachable:
+                    st.caption(f":orange[Ollama has no models yet. Run `ollama pull {model}`.]")
+                else:
+                    st.caption(":red[Ollama isn't running. Start the Ollama app, then reload this page.]")
+            elif provider == "gemini":
+                model = st.text_input("Gemini model", value=model)
+                if not settings.gemini_api_key:
+                    st.caption(":red[Add GEMINI_API_KEY to .env to use Gemini.]")
+            elif provider == "claude":
+                options = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+                if model not in options:
+                    options.insert(0, model)
+                model = st.selectbox("Claude model", options, index=options.index(model))
+                if not settings.anthropic_api_key:
+                    st.caption(":red[Add ANTHROPIC_API_KEY to .env to use Claude.]")
 
-        if st.session_state.history and st.button("Clear chat", width="stretch"):
+            top_k = st.slider("Passages per answer", 1, 10, settings.top_k)
+            st.caption(retrieval_summary(settings))
+
+        if st.session_state.history and st.button("Clear answers", width="stretch"):
             st.session_state.history = []
             st.rerun()
 
@@ -232,57 +215,53 @@ def sidebar(pipeline: RAGPipeline, settings: Settings) -> dict:
 
 
 # ---------------------------------------------------------------------- main
-def welcome() -> None:
-    st.markdown("### Get started")
-    cols = st.columns(3)
-    steps = [
-        ("Upload", "Add one or more text-based research papers (PDF) in the sidebar and press <i>Process</i>."),
-        ("Ask", "Ask about findings, methods, sample sizes, statistics or limitations — across papers or one at a time."),
-        ("Verify", "Every answer cites the document and page it came from, with the supporting passage."),
-    ]
-    for col, (title, body) in zip(cols, steps):
-        col.markdown(f"<div class='rm-step'><b>{title}</b><br>{body}</div>", unsafe_allow_html=True)
-    st.markdown("")
-    st.info(
-        "ResearchMind reduces, but cannot eliminate, the risk of incorrect answers. "
-        "Always check important claims against the cited passages.", icon=":material/info:",
-    )
+def render_answer(answer: RAGAnswer, latest: bool) -> None:
+    if refused_before_llm(answer):
+        html_block(refusal_html(answer))
+    else:
+        html_block(answer_html(answer))
+    for warning in answer.warnings:
+        html_block(f'<div class="rm-warn">{esc(warning)}</div>')
+    html_block(trace_html(answer, open_=latest))
+    html_block(sources_html(answer))
 
 
-def run_question(pipeline: RAGPipeline, settings: Settings, opts: dict, question: str) -> None:
-    try:
-        llm = get_llm_client(opts["provider"], settings, model=opts["model"])
-        with st.spinner("Retrieving evidence and generating an answer…"):
-            answer = pipeline.ask(question, llm, doc_ids=opts["doc_ids"], top_k=opts["top_k"])
-        st.session_state.history.append(answer)
-    except LLMError as exc:
-        st.session_state.history.append({"question": question, "error": str(exc)})
-    except ValueError as exc:
-        st.session_state.history.append({"question": question, "error": str(exc)})
+def welcome(pipeline: RAGPipeline) -> None:
+    html_block(hero_html())
+    st.write("")
+    loaded = {i.doc_name for i in pipeline.documents.values()}
+    cols = st.columns([0.42, 0.58], vertical_alignment="center")
+    if cols[0].button("Load 4 open-access papers", type="primary", disabled=set(PAPERS) <= loaded,
+                      width="stretch"):
+        load_sample_papers(pipeline)
+    cols[1].caption("Or add your own PDFs in the sidebar.")
+    html_block(f'<p class="rm-lede">{LEDE}</p>')
 
 
 def ask_tab(pipeline: RAGPipeline, settings: Settings, opts: dict) -> None:
-    if not st.session_state.history and pipeline.documents:
-        st.markdown("<span class='rm-meta'>Try one of these:</span>", unsafe_allow_html=True)
-        cols = st.columns(len(EXAMPLE_QUESTIONS))
-        for col, q in zip(cols, EXAMPLE_QUESTIONS):
-            if col.button(q, width="stretch"):
-                st.session_state.pending_question = q
+    if not pipeline.documents and not st.session_state.history:
+        welcome(pipeline)
+    elif not st.session_state.history:
+        st.caption("Try one of these, or type your own question below.")
+        with st.container(key="rm-examples", horizontal=True):
+            for q in EXAMPLE_QUESTIONS:
+                if st.button(q, type="secondary"):
+                    st.session_state.pending_question = q
 
-    for item in st.session_state.history:
+    items = st.session_state.history
+    for n, item in enumerate(items):
+        first = " rm-q-first" if n == 0 else ""
+        question = item["question"] if isinstance(item, dict) else item.question
+        rtl = ' rm-rtl" dir="rtl' if detect_language(question) == "ar" else ""
+        html_block(f'<p class="rm-q{first}{rtl}">{esc(question)}</p>')
         if isinstance(item, dict):
-            with st.chat_message("user"):
-                st.markdown(escape_md(item["question"]))
-            with st.chat_message("assistant", avatar=":material/error:"):
-                st.error(item["error"])
-            continue
-        with st.chat_message("user"):
-            st.markdown(escape_md(item.question))
-        with st.chat_message("assistant", avatar=":material/menu_book:"):
-            render_answer(item)
+            st.error(item["error"])
+        else:
+            render_answer(item, latest=n == len(items) - 1)
 
     question = st.chat_input(
-        "Ask a research question…" if pipeline.documents else "Upload documents to start asking questions",
+        "Ask about findings, methods, sample sizes or limitations" if pipeline.documents
+        else "Add papers to start asking questions",
         disabled=not pipeline.documents,
     )
     question = question or st.session_state.pop("pending_question", None)
@@ -293,31 +272,29 @@ def ask_tab(pipeline: RAGPipeline, settings: Settings, opts: dict) -> None:
 
 def compare_tab(pipeline: RAGPipeline, settings: Settings, opts: dict) -> None:
     if len(pipeline.documents) < 2:
-        st.caption("Upload at least two papers to compare them side by side.")
+        st.caption("Add at least two papers to compare them side by side.")
         return
-    st.caption(
-        "Generates a structured comparison (objective, design, data, methods, findings, limitations). "
-        "Each cell cites its evidence; aspects not found in the retrieved text are labelled as such."
-    )
+    st.caption("A table of objective, design, data, methods, findings and limitations for two papers. Every cell "
+               "cites its page; anything the papers don't state is marked as not reported.")
     names = {info.doc_name: doc_id for doc_id, info in pipeline.documents.items()}
     labels = list(names)
     col1, col2 = st.columns(2)
-    a = col1.selectbox("Paper A", labels, index=0)
-    b = col2.selectbox("Paper B", labels, index=1)
+    a = col1.selectbox("First paper", labels, index=0)
+    b = col2.selectbox("Second paper", labels, index=1)
     if st.button("Compare papers", type="primary", disabled=a == b):
         try:
             llm = get_llm_client(opts["provider"], settings, model=opts["model"])
-            with st.spinner("Retrieving evidence for each aspect and generating the comparison…"):
+            with st.spinner("Finding evidence for each aspect and writing the comparison…"):
                 st.session_state.comparison = pipeline.compare(names[a], names[b], llm)
         except (LLMError, ValueError) as exc:
             st.error(str(exc))
     if st.session_state.comparison is not None:
-        render_answer(st.session_state.comparison)
+        render_answer(st.session_state.comparison, latest=True)
 
 
 def main() -> None:
     init_state()
-    st.markdown(CSS, unsafe_allow_html=True)
+    st.html(CSS)
     try:
         settings = get_settings()
     except ValueError as exc:
@@ -326,20 +303,13 @@ def main() -> None:
     pipeline = get_pipeline()
     opts = sidebar(pipeline, settings)
 
-    st.title("ResearchMind AI")
-    st.markdown(
-        "<div class='rm-subtitle'>An evidence-grounded research assistant for scientific literature</div>",
-        unsafe_allow_html=True,
-    )
-    if not pipeline.documents and not st.session_state.history:
-        welcome()
-        return
-
-    ask, compare = st.tabs(["Ask questions", "Compare papers"])
+    ask, compare, bench = st.tabs(["Ask", "Compare papers", "Benchmarks"])
     with ask:
         ask_tab(pipeline, settings, opts)
     with compare:
         compare_tab(pipeline, settings, opts)
+    with bench:
+        benchmarks.render()
 
 
 main()

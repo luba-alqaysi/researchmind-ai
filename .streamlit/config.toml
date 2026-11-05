@@ -1,13 +1,71 @@
+# Dark "lab bench" theme: the app is the instrument panel; quoted paper text sits on lit page slips (see ui/style.py).
 [theme]
-base = "light"
-primaryColor = "#1f4e79"
-backgroundColor = "#fbfaf7"
-secondaryBackgroundColor = "#f1efe9"
-textColor = "#1d1d1f"
-font = "sans serif"
+base = "dark"
+primaryColor = "#3D6BF0"
+backgroundColor = "#121A2B"
+secondaryBackgroundColor = "#1B2538"
+textColor = "#E6EAF2"
+linkColor = "#8FB0FF"
+borderColor = "#2C3850"
+baseRadius = "6px"
+font = "IBM Plex Sans, IBM Plex Sans Arabic, sans-serif"
+headingFont = "IBM Plex Sans, IBM Plex Sans Arabic, sans-serif"
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+chartCategoricalColors = ["#3D6BF0", "#5A6A86"]
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-400-normal.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-500-normal.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-600-normal.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans Arabic"
+url = "app/static/fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans Arabic"
+url = "app/static/fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Serif"
+url = "app/static/fonts/ibm-plex-serif-latin-400-normal.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Serif"
+url = "app/static/fonts/ibm-plex-serif-latin-400-italic.woff2"
+weight = 400
+style = "italic"
+
+[theme.sidebar]
+backgroundColor = "#0E1524"
+secondaryBackgroundColor = "#18213A"
+borderColor = "#2C3850"
 
 [server]
 maxUploadSize = 100
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
