@@ -29,6 +29,14 @@ Two modes:
       python evaluation/evaluate_rag.py generation --provider ollama --reranker laya --rerank-min-score 0.5
       python evaluation/evaluate_rag.py generation --provider ollama --reranker ms-marco --rerank-gate laya --rerank-min-score 0.35
 
+  rewrite     Needs an LLM for query rewriting. Measures follow-up questions asked
+              without a paper filter (with the previous turn as history) and
+              Arabic questions, each searched as written and after rewriting
+              into a standalone English query. --generate also answers the
+              Arabic questions end to end.
+
+      python evaluation/evaluate_rag.py rewrite --provider ollama --generate
+
   report      Rebuild evaluation/RESULTS.md from the saved result files.
 
       python evaluation/evaluate_rag.py report
@@ -58,10 +66,12 @@ from src.config import Settings  # noqa: E402
 from src.embeddings import Embedder  # noqa: E402
 from src.llm_client import LLMError, get_llm_client  # noqa: E402
 from src.rag_pipeline import RAGPipeline  # noqa: E402
+from src.query_rewriter import detect_language, rewrite_query  # noqa: E402
 from src.reranker import RERANKERS, get_reranker  # noqa: E402
 
 PAPERS_DIR = ROOT / "sample_data" / "papers"
 QUESTIONS = Path(__file__).with_name("evaluation_questions.csv")
+ARABIC_QUESTIONS = Path(__file__).with_name("arabic_questions.csv")
 RESULTS_DIR = Path(__file__).with_name("results")
 RESULTS_MD = Path(__file__).with_name("RESULTS.md")
 
@@ -474,6 +484,133 @@ def run_rerank(args) -> None:
     write_report()
 
 
+# ----------------------------------------------------------------- rewrite
+def follow_up_questions(questions: pd.DataFrame, short: pd.DataFrame) -> pd.DataFrame:
+    """Each short question, preceded by a first turn about the same paper: another
+    question on that paper and its reference answer as the assistant's reply."""
+    rows = []
+    for s in short.itertuples():
+        same = questions[(questions.doc_name == s.doc_name) & (questions.type != s.type) & questions.answerable]
+        first = same.iloc[0]
+        rows.append({**s._asdict(), "history": [(first.question, first.reference_answer)]})
+    return pd.DataFrame(rows).drop(columns=["Index"])
+
+
+def arabic_question_set(questions: pd.DataFrame) -> pd.DataFrame:
+    arabic = pd.read_csv(ARABIC_QUESTIONS)
+    merged = arabic.merge(questions, left_on="source_id", right_on="id", suffixes=("", "_en"))
+    return merged.rename(columns={"question": "question_en"}).assign(question=lambda d: d.question_ar)
+
+
+def _strip_labels(text: str) -> str:
+    return re.sub(r"\[[^\[\]]+, Page \d+\]", " ", text)
+
+
+def run_rewrite(args) -> None:
+    questions = load_questions()
+    follow = follow_up_questions(questions, short_questions(questions))
+    arabic = arabic_question_set(questions)
+    base = Settings.from_env().with_overrides(
+        reranker=args.reranker, rerank_gate=args.rerank_gate, rerank_min_score=args.rerank_min_score)
+    pipeline = build_pipeline(base, Embedder(base.embedding_model), get_reranker(base.reranker),
+                              get_reranker(base.rerank_gate))
+    llm = get_llm_client(args.provider, base, model=args.model)
+    cutoff = base.rerank_min_score if pipeline.judge is not None else base.min_similarity
+    print(f"Indexed {len(pipeline.documents)} papers; {len(follow)} follow-ups, {len(arabic)} Arabic questions; "
+          f"rewriting with {llm.provider}/{llm.model}; evidence cutoff {cutoff:.2f}.")
+
+    records = []
+
+    def measure(set_name: str, variant: str, row, query: str, rewrite_ms: float = 0.0) -> None:
+        retrieved = pipeline.retrieve(query)
+        best = (max(r.gate_score for r in retrieved) if pipeline.judge is not None else retrieved[0].score) \
+            if retrieved else 0.0
+        m = retrieval_metrics(row, retrieved) if row.answerable else {}
+        m.update(set=set_name, variant=variant, id=row.id, answerable=row.answerable, query=query,
+                 evidence_score=best, passed=best >= cutoff, rewrite_ms=rewrite_ms)
+        records.append(m)
+
+    for row in follow.itertuples():
+        measure("follow_up", "as written", row, row.question)
+        rw = rewrite_query(row.question, row.history, llm)
+        measure("follow_up", "rewritten", row, rw.query, rw.ms)
+        print(f"  {row.id}: {rw.query!r} ({rw.ms / 1000:.1f} s)")
+    other_turn = {}  # a first turn about a different paper, to check that history does not override the topic
+    for doc in arabic.doc_name.unique():
+        other = questions[(questions.doc_name != doc) & (questions.doc_name != "ALL") & questions.answerable].iloc[0]
+        other_turn[doc] = [(other.question, other.reference_answer)]
+    for row in arabic.itertuples():
+        measure("arabic", "English original", row, row.question_en)
+        measure("arabic", "as written", row, row.question)
+        rw = rewrite_query(row.question, None, llm)
+        measure("arabic", "rewritten", row, rw.query, rw.ms)
+        print(f"  {row.id}: {rw.query!r} ({rw.ms / 1000:.1f} s)")
+        if row.doc_name != "ALL":
+            rw = rewrite_query(row.question, other_turn[row.doc_name], llm)
+            measure("arabic", "rewritten after a turn about another paper", row, rw.query, rw.ms)
+            print(f"  {row.id} after another paper: {rw.query!r}")
+
+    m = pd.DataFrame(records)
+    summary = []
+    for (set_name, variant), g in m.groupby(["set", "variant"], sort=False):
+        a, u = g[g.answerable], g[~g.answerable]
+        summary.append({
+            "set": set_name, "variant": variant, "answerable": int(len(a)),
+            "page_hit@5": float(a.page_hit.mean()), "MRR": float(a.rr.mean()),
+            "answerable_passed": int(a.passed.sum()), "unanswerable": int(len(u)),
+            "unanswerable_refused": int((~u.passed).sum()) if len(u) else None,
+            "rewrite_s_p50": float(np.median(g.rewrite_ms)) / 1000 if variant == "rewritten" else None,
+        })
+        if variant.startswith("rewritten after"):  # same questions, rewritten without the unrelated turn
+            same = m[(m.set == set_name) & (m.variant == "rewritten") & m.id.isin(a.id)]
+            summary[-1]["page_hit@5_without_turn"] = float(same.page_hit.mean())
+
+    RESULTS_DIR.mkdir(exist_ok=True)
+    m.to_csv(RESULTS_DIR / "rewrite_per_question.csv", index=False)
+    pd.DataFrame(summary).to_csv(RESULTS_DIR / "rewrite_summary.csv", index=False)  # saved before generation
+
+    if args.generate:
+        gen = []
+        for row in arabic.itertuples():
+            answer = None
+            for attempt in range(2):  # one retry: a local model under memory pressure can time out once
+                try:
+                    answer = pipeline.ask(row.question, llm)
+                    break
+                except LLMError as exc:
+                    print(f"  answer {row.id}: attempt {attempt + 1} failed: {exc}")
+            if answer is None:
+                gen.append({"answerable": row.answerable, "error": True})
+                continue
+            cited = [(c.doc_name, c.page_number) for c in answer.citations]
+            correct = [p in row.evidence for p in cited] if row.answerable else []
+            gen.append({
+                "answerable": row.answerable, "error": False, "insufficient": answer.insufficient_evidence,
+                "in_arabic": detect_language(_strip_labels(answer.answer)) == "ar",
+                "n_citations": len(cited), "precision": float(np.mean(correct)) if correct else np.nan,
+            })
+            print(f"  answer {row.id}: arabic={gen[-1]['in_arabic']} citations={len(cited)} "
+                  f"insufficient={answer.insufficient_evidence}")
+        gdf = pd.DataFrame(gen)
+        errors = int(gdf.error.sum())
+        gdf = gdf[~gdf.error]
+        a, u = gdf[gdf.answerable], gdf[~gdf.answerable]
+        answered = a[~a.insufficient]
+        summary.append({
+            "set": "arabic", "variant": f"answers by {llm.model}", "answerable": int(len(a)),
+            "answered": int(len(answered)), "answered_in_arabic": int(answered.in_arabic.sum()),
+            "answers_with_citation": int((answered.n_citations > 0).sum()),
+            "citation_precision": float(answered.precision.mean()),
+            "unanswerable": int(len(u)), "unanswerable_refused": int(u.insufficient.sum()), "errors": errors,
+        })
+
+    pd.DataFrame(summary).to_csv(RESULTS_DIR / "rewrite_summary.csv", index=False)
+    meta = {"date": dt.date.today().isoformat(), "llm": f"{llm.provider}/{llm.model}", "reranker": base.reranker,
+            "rerank_gate": base.rerank_gate, "cutoff": cutoff}
+    (RESULTS_DIR / "rewrite_meta.json").write_text(json.dumps(meta, indent=2))
+    write_report()
+
+
 # ------------------------------------------------------------------- report
 def write_report() -> None:
     parts = [
@@ -544,7 +681,7 @@ def write_report() -> None:
             "* **RANKER+GATE** rows (for example ms-marco+laya): the first model orders the candidates, the second "
             "judges only the final passages, and its score is the evidence score.",
             "",
-            md_table(rr.drop(columns=["load_s"]).fillna("")),
+            md_table(rr.drop(columns=["load_s"]).astype(object).fillna("")),
             "",
         ]
     gens = sorted(RESULTS_DIR.glob("generation_*.json"))
@@ -575,6 +712,30 @@ def write_report() -> None:
             "* **correctness / faithfulness**: LLM-judge scores (see README for caveats); absent when no judge was used.",
             "",
             md_table(transposed),
+            "",
+        ]
+    rw_path = RESULTS_DIR / "rewrite_summary.csv"
+    if rw_path.exists():
+        meta_path = RESULTS_DIR / "rewrite_meta.json"
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        parts += [
+            "## Follow-up and Arabic questions",
+            "",
+            f"Run {meta.get('date', '?')}. Rewriting with {meta.get('llm', '?')}; retrieval with the "
+            f"{meta.get('reranker', '?')} reranker and the {meta.get('rerank_gate', '?')} gate, evidence cutoff "
+            f"{meta.get('cutoff', '?')}. All four papers are searched (no paper filter).",
+            "",
+            "* **follow_up**: the 15 short questions, each after a first turn about the same paper. *as written* "
+            "searches the short question alone; *rewritten* searches the standalone query the LLM produced from "
+            "the conversation.",
+            "* **arabic**: 16 Arabic translations (12 answerable, 4 unanswerable) of questions in the main set, "
+            "searched as written, after rewriting into English, and (for reference) with the original English question. "
+            "*rewritten after a turn about another paper* checks that conversation history does not replace the "
+            "topic the question names (single-paper questions only).",
+            "* **answerable_passed**: answerable questions that cleared the evidence check; "
+            "**unanswerable_refused**: unanswerable questions that did not.",
+            "",
+            md_table(pd.read_csv(rw_path).astype(object).fillna("")),
             "",
         ]
     RESULTS_MD.write_text("\n".join(parts))
@@ -614,9 +775,17 @@ def main() -> None:
     k.add_argument("--rerankers", nargs="+", default=["none", *RERANKERS, "ms-marco+laya"],
                    help="names from: none, " + ", ".join(RERANKERS) + "; or RANKER+GATE, e.g. ms-marco+laya")
 
+    w = sub.add_parser("rewrite", help="follow-up and Arabic questions with query rewriting (needs an LLM)")
+    w.add_argument("--provider", default="ollama", choices=["ollama", "gemini", "claude"])
+    w.add_argument("--model", default=None)
+    w.add_argument("--reranker", default="ms-marco", choices=["none", *RERANKERS])
+    w.add_argument("--rerank-gate", default="laya", choices=["none", *RERANKERS])
+    w.add_argument("--rerank-min-score", type=float, default=0.35)
+    w.add_argument("--generate", action="store_true", help="also answer the Arabic questions end to end")
+
     sub.add_parser("report", help="rebuild RESULTS.md")
     args = parser.parse_args()
-    {"retrieval": run_retrieval, "generation": run_generation, "rerank": run_rerank,
+    {"retrieval": run_retrieval, "generation": run_generation, "rerank": run_rerank, "rewrite": run_rewrite,
      "report": lambda _: write_report()}[args.mode](args)
 
 

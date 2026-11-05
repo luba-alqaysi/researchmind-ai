@@ -147,3 +147,21 @@ Last run 2026-11-05. Default chunking, top-k 5; rerankers rescore the 20 best em
 | generation_s_p50 | nan | 9.627 | 37.810 | 39.444 | 15.802 |
 | generation_s_p95 | nan | 21.349 | 52.965 | 51.427 | 25.226 |
 | truncated_answers | 0 | 0 | 0 | 0 | 0 |
+
+## Follow-up and Arabic questions
+
+Run 2026-11-05. Rewriting with ollama/llama3.1:8b; retrieval with the ms-marco reranker and the laya gate, evidence cutoff 0.35. All four papers are searched (no paper filter).
+
+* **follow_up**: the 15 short questions, each after a first turn about the same paper. *as written* searches the short question alone; *rewritten* searches the standalone query the LLM produced from the conversation.
+* **arabic**: 16 Arabic translations (12 answerable, 4 unanswerable) of questions in the main set, searched as written, after rewriting into English, and (for reference) with the original English question. *rewritten after a turn about another paper* checks that conversation history does not replace the topic the question names (single-paper questions only).
+* **answerable_passed**: answerable questions that cleared the evidence check; **unanswerable_refused**: unanswerable questions that did not.
+
+| set | variant | answerable | page_hit@5 | MRR | answerable_passed | unanswerable | unanswerable_refused | rewrite_s_p50 | page_hit@5_without_turn | answered | answered_in_arabic | answers_with_citation | citation_precision | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| follow_up | as written | 15 | 0.333 | 0.144 | 15.000 | 0 |  |  |  |  |  |  |  |  |
+| follow_up | rewritten | 15 | 0.800 | 0.594 | 12.000 | 0 |  | 1.483 |  |  |  |  |  |  |
+| arabic | English original | 12 | 1.000 | 0.944 | 12.000 | 4 | 4.000 |  |  |  |  |  |  |  |
+| arabic | as written | 12 | 0.000 | 0.000 | 9.000 | 4 | 1.000 |  |  |  |  |  |  |  |
+| arabic | rewritten | 12 | 1.000 | 0.917 | 12.000 | 4 | 4.000 | 1.825 |  |  |  |  |  |  |
+| arabic | rewritten after a turn about another paper | 11 | 1.000 | 0.955 | 11.000 | 0 |  |  | 1.000 |  |  |  |  |  |
+| arabic | answers by llama3.1:8b | 12 |  |  |  | 4 | 4.000 |  |  | 11.000 | 11.000 | 9.000 | 0.741 | 0.000 |

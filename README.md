@@ -20,31 +20,51 @@ document and page, with the supporting passage one click away. ResearchMind runs
 - **A real bug, diagnosed and fixed with data.** Short questions like *"ok what about the sample size?"* were wrongly
   refused. Comparing four rerankers showed that no single model was best at both ranking and refusing, which led to
   the ranker + gate design. See [From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix).
-- **Private by default.** With Ollama, papers, embeddings and models stay on your machine.
+- **Arabic and follow-up questions.** Ask in Arabic or English, or follow up with *"ok what about the sample size?"*:
+  the question is rewritten into a standalone English search query, and the answer comes back in the language you
+  asked in, with citations from English papers. See [Follow-up and Arabic questions](#follow-up-and-arabic-questions).
+- **It shows its work.** Under every answer, a five-step trace shows what was searched, how many passages were found,
+  how they were ranked, the evidence check against its threshold, and the model's citations; the sentence each answer
+  relies on is highlighted in the source passage.
+- **Private by default.** With Ollama, papers, embeddings and models stay on your machine; even the fonts are
+  self-hosted.
 
-![Answer with verified citations and supporting excerpt](assets/screenshots/02_answer_with_citations.png)
+![An Arabic question answered from an English paper, with the trace and the highlighted source sentences](assets/screenshots/04_arabic_answer.png)
+
+*An Arabic question about an English paper: it is searched in English (step 1 of the trace), passes the evidence
+check (step 4), and is answered in Arabic with page citations; the sentences the answer relies on are highlighted.*
 
 <details>
 <summary>More screenshots</summary>
 
-**Insufficient evidence**: an off-topic question is answered as such, without calling the LLM.
-
-![Insufficient evidence](assets/screenshots/03_insufficient_evidence.png)
-
-**Paper comparison**: a structured table with a citation in every cell. Note one real error: the *Limitations* cell
-for Paper A cites funding and competing-interest statements, which are real passages but not limitations. Citations
-guarantee *where* a claim came from, not that the passage supports it, which is why excerpts are always shown.
-
-![Paper comparison](assets/screenshots/04_paper_comparison.png)
-
-**Welcome screen**
+**Welcome screen**: a real example from one of the evaluation papers, and one click to load all four.
 
 ![Welcome screen](assets/screenshots/01_welcome.png)
 
+**Refusal**: an off-topic question fails the evidence check, and nothing is sent to the language model.
+
+![Refusal before calling the language model](assets/screenshots/03_refusal.png)
+
+**A follow-up question**: *"ok what about the sample size?"* is rewritten with the conversation into "sample size in
+cohort-effects study". The answer quotes two sample sizes from the paper, though the paper's headline figure (four
+cohorts, 39 to 283 patients) would have been the better answer, a reminder to check the highlighted passages.
+
+![Follow-up question with its trace](assets/screenshots/02_answer_with_trace.png)
+
+**Benchmarks tab**: the evaluation results, read from the saved result files.
+
+![Benchmarks tab](assets/screenshots/05_benchmarks.png)
+
+**Paper comparison**: a structured table with a citation in every cell. Note one real error: the *Limitations* cell
+for Paper A cites a funding statement, which is a real passage but not a limitation. Citations guarantee *where* a
+claim came from, not that the passage supports it, which is why the passages are always shown.
+
+![Paper comparison](assets/screenshots/06_paper_comparison.png)
+
 </details>
 
-All screenshots were captured from the running app (`llama3.1:8b` via Ollama, four CC BY papers) with a headless
-browser; nothing was edited.
+All screenshots were captured from the running app (`llama3.1:8b` via Ollama, the ms-marco reranker and the Laya
+gate, four CC BY papers) with headless Chromium; nothing was edited.
 
 ---
 
@@ -66,14 +86,18 @@ browser; nothing was edited.
 ## Features
 
 - **Multi-PDF upload** with per-file status: indexed, duplicate, scanned (no text layer), or unreadable.
-- **Question answering** over all papers or a selected subset, with a chat history for the session.
-- **Verified citations** in the form `[paper.pdf, Page 4]`, plus expandable supporting excerpts and similarity scores.
+- **Question answering** over all papers or a selected subset, in English or Arabic, with follow-up questions that
+  use the conversation.
+- **Verified citations** shown as page tags, with each cited passage on a page slip and its closest sentence
+  highlighted.
+- **"How this answer was made"**: a five-step trace (read, found, ranked, checked evidence, wrote) under every answer.
 - **Insufficient-evidence handling**: off-topic questions are answered as such instead of being guessed.
 - **Reranking and relevance gating** (optional): a cross-encoder reorders passages, and a relevance model decides
   whether there is enough evidence to answer.
 - **Paper comparison**: a structured table (objective, design, data and sample size, methods, findings, limitations) for two papers, with citations in every cell.
 - **Pluggable LLMs**: Ollama (local, default), Gemini, Claude, or a no-LLM mode that returns the most relevant passages.
-- **Reproducible evaluation**: 31 hand-verified questions, a retrieval parameter grid, and end-to-end metrics.
+- **Reproducible evaluation**: 31 hand-verified questions, 15 short follow-ups, 16 Arabic questions, a retrieval
+  parameter grid and end-to-end metrics, also shown in the app's **Benchmarks** tab.
 
 ## How it works
 
@@ -87,14 +111,15 @@ flowchart LR
         E --> F[(FAISS IndexFlatIP<br/>+ chunk metadata)]
     end
     subgraph Question answering
-        Q[Question] --> QE[Query embedding]
+        Q[Question<br/>English or Arabic] --> RW[Query rewriting<br/>standalone English query,<br/>only for follow-ups and Arabic]
+        RW --> QE[Query embedding]
         QE --> S[Cosine search<br/>20 candidates,<br/>optional document filter]
         F --> S
         S --> R[Cross-encoder reranker<br/>ms-marco MiniLM<br/>keeps top 5]
         R --> G[Relevance gate<br/>Laya: does this passage<br/>answer the question?]
         G --> T{Best relevance ≥<br/>threshold?}
         T -- no --> I[Insufficient evidence<br/>no LLM call]
-        T -- yes --> P[Grounded prompt<br/>sources S1..Sk]
+        T -- yes --> P[Grounded prompt<br/>sources S1..Sk,<br/>answer in the question's language]
         P --> L[LLM<br/>Ollama / Gemini / Claude]
         L --> V[Citation resolver<br/>S# → document + page]
         V --> O[Answer + citations<br/>+ excerpts]
@@ -109,10 +134,13 @@ flowchart LR
 | `src/vector_store.py` | FAISS index with an aligned metadata list; filter, remove, save/load |
 | `src/prompts.py` | System prompt, source formatting, prompt-injection neutralisation, comparison template |
 | `src/citations.py` | Maps the model's `[S#]` markers to verified document/page labels; drops invalid IDs |
+| `src/query_rewriter.py` | Language detection and LLM rewriting of follow-up and Arabic questions into a standalone English query |
+| `src/highlight.py` | Finds the sentence of a cited passage that best matches the answer, for highlighting |
 | `src/reranker.py` | Optional cross-encoder rerankers (ms-marco, bge) and the Laya relevance model behind one `score()` interface |
 | `src/llm_client.py` | Ollama, Gemini, Claude and extractive clients behind one `generate()` interface, typed errors |
 | `src/rag_pipeline.py` | Orchestration: ingest, retrieve, rerank, evidence check, generate, resolve citations, compare |
-| `app.py` | Streamlit UI only; contains no retrieval or generation logic |
+| `src/benchmarks.py` | Loads the saved evaluation results for the Benchmarks tab |
+| `app.py`, `ui/` | Streamlit UI only: layout and state in `app.py`, HTML building blocks and styles in `ui/` |
 
 ## Reducing hallucinations
 
@@ -206,6 +234,7 @@ Hugging Face on first use; Laya needs the optional `laya` package from `requirem
 | `RERANK_GATE` | `laya` | Separate model that judges the final passages for the evidence check; `none` lets the reranker judge |
 | `RERANK_CANDIDATES` | `20` | Passages fetched by cosine search before reranking |
 | `RERANK_MIN_SCORE` | `0.35` | With a reranker or gate active, this 0–1 relevance cutoff replaces `MIN_SIMILARITY` |
+| `QUERY_REWRITING` | `true` | Rewrite follow-up and non-English questions into a standalone English search query (one extra LLM call) |
 
 ## Evaluation
 
@@ -220,6 +249,7 @@ python evaluation/evaluate_rag.py retrieval                 # no LLM needed, a f
 python evaluation/evaluate_rag.py generation --provider ollama
 python evaluation/evaluate_rag.py rerank                    # compares rerankers and gates, no LLM needed
 python evaluation/evaluate_rag.py generation --provider ollama --reranker ms-marco --rerank-gate laya --rerank-min-score 0.35
+python evaluation/evaluate_rag.py rewrite --provider ollama --generate   # follow-up and Arabic questions
 python evaluation/evaluate_rag.py generation --provider ollama --judge claude --judge-model claude-haiku-5-5   # optional judge
 ```
 
@@ -378,6 +408,33 @@ loaded (with Llama 3.1 8B also in memory, a 16 GB machine swaps and everything s
 lost their citation wrote "According to S1" instead of "[S1]", a formatting issue that the citation parser could
 accept in future.
 
+### Follow-up and Arabic questions
+
+The retrieval models are English-only and see one question at a time, so a follow-up such as *"ok what about the
+sample size?"* or a question in Arabic is first rewritten by the LLM into one standalone English search query; the
+answer is still written in the language of the question. `python evaluation/evaluate_rag.py rewrite --provider ollama
+--generate` measures this with `llama3.1:8b` rewriting, the ms-marco reranker and the Laya gate (cutoff 0.35), all
+four papers searched and no paper selected:
+
+| Questions | Searched as written | After rewriting |
+|---|---|---|
+| 15 follow-ups, each after a first turn about the same paper: evidence page in top 5 | 5 / 15 | **12 / 15** |
+| 12 answerable Arabic questions: evidence page in top 5 | 0 / 12 | **12 / 12** (English originals: 12 / 12) |
+| 4 unanswerable Arabic questions refused before the LLM | 1 / 4 | **4 / 4** |
+| 11 single-paper Arabic questions asked after a turn about a *different* paper | n/a | **11 / 11** |
+
+A rewrite took 1.5 to 1.8 s (median). With Llama answering the 16 Arabic questions end to end:
+- It answered 11 of the 12 answerable ones (one was wrongly refused) and wrote all 11 answers in Arabic.
+- 9 of those answers carry citations, and 74% of the citations point to an evidence page (74.6% for the English set).
+- It refused all 4 unanswerable questions.
+
+**Caveats.**
+- The short follow-ups searched as written passed the evidence check 15 times out of 15, although only 5 found the
+  right page. A vague question can match vague passages, which is why rewriting matters even when nothing is refused.
+- The Arabic questions are translations of questions in the main set, made with AI assistance for this project and
+  not yet reviewed by a native speaker. A second pass reworded three ambiguous scientific terms before the run.
+- 16 questions are a small set, and the rewriting model is the same small local model that writes the answers.
+
 ## Testing
 
 ```bash
@@ -394,11 +451,15 @@ and checks semantic retrieval and that FAISS results match a NumPy brute-force r
 
 ```text
 researchmind-ai/
-├── app.py                      Streamlit interface
+├── app.py                      Streamlit interface (layout and state)
+├── ui/                         HTML building blocks, styles and the Benchmarks tab
 ├── src/                        Pipeline modules (see "How it works")
+├── static/fonts/               Self-hosted IBM Plex fonts (SIL Open Font License)
+├── .streamlit/config.toml      Theme
 ├── evaluation/
 │   ├── download_papers.py      Fetches the CC BY evaluation papers
 │   ├── evaluation_questions.csv
+│   ├── arabic_questions.csv    Arabic versions of 16 questions, linked to the English evidence
 │   ├── evaluate_rag.py         Retrieval grid, end-to-end runs, report
 │   ├── RESULTS.md              Generated results
 │   └── results/                Summary CSV/JSON files
@@ -430,6 +491,13 @@ researchmind-ai/
   question is answerable from these passages" from "it is not". The evaluation showed that no single model was best at
   both, so the pipeline accepts one model for each (see [From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix)).
   The gate only scores the final top-k passages, which keeps a large gate model affordable.
+- **Query rewriting instead of multilingual embeddings.** The measured retrieval stack (MiniLM, ms-marco, Laya) is
+  English-only. Rather than replacing it, the LLM rewrites follow-up and Arabic questions into one standalone English
+  query, which also fixes follow-ups that make no sense on their own. The cost is one extra LLM call, made only when
+  needed, and a dependence on the model's translation; both are measured.
+- **The typeface shows who is speaking.** In the interface, text quoted from a paper is set in a serif on a light page
+  slip, while the assistant's words are in a sans serif on the dark background, and the highlighter colour is used
+  only for evidence. The design was planned with a written brief and reviewed against screenshots of the running app.
 - **Embedding model in `st.cache_resource`, index in `st.session_state`.** The model loads once per server; each browser
   session has its own document library, and repeated questions never re-embed or rebuild anything.
 - **macOS OpenMP workaround.** The faiss-cpu and PyTorch wheels each ship `libomp`, and loading both aborts the process on
@@ -442,8 +510,9 @@ researchmind-ai/
 - **Text-based PDFs only.** Scanned PDFs are detected and reported, but OCR is not implemented.
 - **Tables, figures and equations** are extracted as plain text (or not at all for figures), so questions that depend on
   them may be answered poorly.
-- **Each question is answered independently.** The chat history is for display; follow-up questions such as "and its
-  limitations?" are not rewritten using earlier turns.
+- **Follow-ups and Arabic depend on the LLM's rewrite.** A poor translation or a misread reference sends the search in
+  the wrong direction; the trace shows the query that was actually searched. Without an LLM (extractive mode),
+  questions are searched as written.
 - **First-stage retrieval is purely semantic.** Exact terms (gene names, accession numbers) can be missed by the small
   embedding model, and the reranker can only reorder what that search found; hybrid keyword + vector search would help.
 - **Grounding is not verification.** Citations are guaranteed to point at a retrieved passage, but the passage may not fully
@@ -457,7 +526,7 @@ researchmind-ai/
 
 - Hybrid BM25 + vector retrieval.
 - Recalibrating the gate's probabilities on a larger, held-out question set.
-- Query rewriting for conversational follow-ups.
+- Native multilingual retrieval (for example a multilingual embedding model and reranker) to compare with rewriting.
 - OCR (for example Tesseract) for scanned PDFs, and table-aware extraction.
 - Sentence-level claim verification (NLI) to flag citations that do not support their sentence.
 - Streaming responses in the UI.
@@ -467,4 +536,5 @@ researchmind-ai/
 
 The code is released under the [MIT License](LICENSE). The evaluation uses four arXiv papers released under CC BY 4.0
 (listed with attribution in [sample_data/README.md](sample_data/README.md)); they are downloaded by a script and are not
-redistributed in this repository. No user-uploaded document is written to disk.
+redistributed in this repository. No user-uploaded document is written to disk. The IBM Plex fonts in `static/fonts/` are
+released under the SIL Open Font License 1.1 (`static/fonts/OFL.txt`).

@@ -1,0 +1,8 @@
+set,variant,answerable,page_hit@5,MRR,answerable_passed,unanswerable,unanswerable_refused,rewrite_s_p50,page_hit@5_without_turn,answered,answered_in_arabic,answers_with_citation,citation_precision,errors
+follow_up,as written,15,0.3333333333333333,0.14444444444444443,15.0,0,,,,,,,,
+follow_up,rewritten,15,0.8,0.5944444444444444,12.0,0,,1.482592915999703,,,,,,
+arabic,English original,12,1.0,0.9444444444444445,12.0,4,4.0,,,,,,,
+arabic,as written,12,0.0,0.0,9.0,4,1.0,,,,,,,
+arabic,rewritten,12,1.0,0.9166666666666666,12.0,4,4.0,1.8251691250043223,,,,,,
+arabic,rewritten after a turn about another paper,11,1.0,0.9545454545454546,11.0,0,,,1.0,,,,,
+arabic,answers by llama3.1:8b,12,,,,4,4.0,,,11.0,11.0,9.0,0.7407407407407407,0.0

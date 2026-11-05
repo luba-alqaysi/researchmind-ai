@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-05",
+  "llm": "ollama/llama3.1:8b",
+  "reranker": "ms-marco",
+  "rerank_gate": "laya",
+  "cutoff": 0.35
+}
