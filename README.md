@@ -1,7 +1,3 @@
-
-
-https://github.com/user-attachments/assets/a32826be-5131-4e3e-98c3-1066c0dd15f7
-
 # ResearchMind AI
 
 **An evidence-grounded research assistant for scientific papers, built with Retrieval-Augmented Generation (RAG).**
@@ -12,7 +8,7 @@ document and page, with the supporting passage one click away. ResearchMind runs
 
 **The idea in 30 seconds** (sound on):
 
-https://github.com/user-attachments/assets/e2b62caa-391a-4823-be6a-16ce3854f32c
+https://github.com/user-attachments/assets/a32826be-5131-4e3e-98c3-1066c0dd15f7
 
 *The pitch video was made with [Remotion](https://www.remotion.dev) and a free, offline voice
 ([Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)). The app screens, paper text and numbers in it are real; the
