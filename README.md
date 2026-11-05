@@ -6,6 +6,17 @@ Upload research papers (PDF), ask questions in plain language, and get answers i
 document and page, with the supporting passage one click away. ResearchMind runs fully locally with
 [Ollama](https://ollama.com), or with Google Gemini or Anthropic Claude if you provide an API key.
 
+<p align="center">
+  <a href="assets/video/researchmind-pitch.mp4"><img src="assets/video/pitch-preview.gif" width="800"
+     alt="Preview of the pitch video: an answer with its source sentence highlighted, then an off-topic question refused by the evidence check"></a>
+  <br>
+  <a href="assets/video/researchmind-pitch.mp4"><b>Watch the 30-second pitch (MP4, with sound)</b></a>
+</p>
+
+*The pitch video was made with [Remotion](https://www.remotion.dev) and a free, offline voice
+([Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)). The app screens, paper text and numbers in it are real; the
+made-up citation in the opening is a labelled example.*
+
 **Highlights**
 
 - **Two-stage retrieval with a relevance gate.** FAISS cosine search finds 20 candidate passages, a cross-encoder
