@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/e2b62caa-391a-4823-be6a-16ce3854f32c
+
 # ResearchMind AI
 
 **An evidence-grounded research assistant for scientific papers, built with Retrieval-Augmented Generation (RAG).**
