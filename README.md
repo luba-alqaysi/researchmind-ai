@@ -6,6 +6,22 @@ Upload research papers (PDF), ask questions in plain language, and get answers i
 document and page, with the supporting passage one click away. ResearchMind runs fully locally with
 [Ollama](https://ollama.com), or with Google Gemini or Anthropic Claude if you provide an API key.
 
+**Highlights**
+
+- **Two-stage retrieval with a relevance gate.** FAISS cosine search finds 20 candidate passages, a cross-encoder
+  reranker (ms-marco MiniLM) orders them, and a separate relevance model ([Laya](https://huggingface.co/convaiinnovations/laya))
+  judges whether the top passages actually answer the question.
+- **A hallucination guardrail.** When no passage is judged relevant, the LLM is never called. In the evaluation this
+  refused all 4 unanswerable questions and none of the 27 answerable ones.
+- **Citations verified in code.** The model cites source IDs; code maps them to `[paper.pdf, Page 4]` from metadata
+  stored at indexing time, so a page number cannot be invented (0 invalid citations across all runs).
+- **Measured, not assumed.** 31 hand-verified questions plus 15 short follow-up questions, scored with MRR, AUROC and
+  citation precision. Every number in this README comes from the evaluation script.
+- **A real bug, diagnosed and fixed with data.** Short questions like *"ok what about the sample size?"* were wrongly
+  refused. Comparing four rerankers showed that no single model was best at both ranking and refusing, which led to
+  the ranker + gate design. See [From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix).
+- **Private by default.** With Ollama, papers, embeddings and models stay on your machine.
+
 ![Answer with verified citations and supporting excerpt](assets/screenshots/02_answer_with_citations.png)
 
 <details>
@@ -53,6 +69,8 @@ browser; nothing was edited.
 - **Question answering** over all papers or a selected subset, with a chat history for the session.
 - **Verified citations** in the form `[paper.pdf, Page 4]`, plus expandable supporting excerpts and similarity scores.
 - **Insufficient-evidence handling**: off-topic questions are answered as such instead of being guessed.
+- **Reranking and relevance gating** (optional): a cross-encoder reorders passages, and a relevance model decides
+  whether there is enough evidence to answer.
 - **Paper comparison**: a structured table (objective, design, data and sample size, methods, findings, limitations) for two papers, with citations in every cell.
 - **Pluggable LLMs**: Ollama (local, default), Gemini, Claude, or a no-LLM mode that returns the most relevant passages.
 - **Reproducible evaluation**: 31 hand-verified questions, a retrieval parameter grid, and end-to-end metrics.
@@ -70,9 +88,11 @@ flowchart LR
     end
     subgraph Question answering
         Q[Question] --> QE[Query embedding]
-        QE --> S[Top-k cosine search<br/>optional document filter]
+        QE --> S[Cosine search<br/>20 candidates,<br/>optional document filter]
         F --> S
-        S --> T{Best score ≥<br/>threshold?}
+        S --> R[Cross-encoder reranker<br/>ms-marco MiniLM<br/>keeps top 5]
+        R --> G[Relevance gate<br/>Laya: does this passage<br/>answer the question?]
+        G --> T{Best relevance ≥<br/>threshold?}
         T -- no --> I[Insufficient evidence<br/>no LLM call]
         T -- yes --> P[Grounded prompt<br/>sources S1..Sk]
         P --> L[LLM<br/>Ollama / Gemini / Claude]
@@ -89,8 +109,9 @@ flowchart LR
 | `src/vector_store.py` | FAISS index with an aligned metadata list; filter, remove, save/load |
 | `src/prompts.py` | System prompt, source formatting, prompt-injection neutralisation, comparison template |
 | `src/citations.py` | Maps the model's `[S#]` markers to verified document/page labels; drops invalid IDs |
+| `src/reranker.py` | Optional cross-encoder rerankers (ms-marco, bge) and the Laya relevance model behind one `score()` interface |
 | `src/llm_client.py` | Ollama, Gemini, Claude and extractive clients behind one `generate()` interface, typed errors |
-| `src/rag_pipeline.py` | Orchestration: ingest, retrieve, threshold check, generate, resolve citations, compare |
+| `src/rag_pipeline.py` | Orchestration: ingest, retrieve, rerank, evidence check, generate, resolve citations, compare |
 | `app.py` | Streamlit UI only; contains no retrieval or generation logic |
 
 ## Reducing hallucinations
@@ -106,8 +127,9 @@ answer easy to check:
    retrieved is removed and reported as a warning, and answers without any citation are flagged.
 3. **Exact page numbers.** Chunks never cross page boundaries, so the page attached to a chunk is always the page the
    text came from.
-4. **Two-layer insufficient-evidence check.** If the best passage is below a calibrated similarity threshold, the LLM is
-   not called at all. Otherwise, the model can still report insufficient evidence, which the UI shows explicitly.
+4. **Two-layer insufficient-evidence check.** If no passage clears a calibrated threshold (the relevance gate's score,
+   or cosine similarity when no gate is configured), the LLM is not called at all. Otherwise, the model can still
+   report insufficient evidence, which the UI shows explicitly.
 5. **Documents are untrusted input.** Instructions and evidence are separated (system prompt versus `<source>` blocks),
    the prompt tells the model never to follow instructions found in sources, and tag-like text in PDFs is neutralised
    so a document cannot close its source block.
@@ -115,11 +137,12 @@ answer easy to check:
 
 ## Quick start
 
-Requirements: Python 3.11+, about 1.5 GB of disk for Python packages, plus about 5 GB for a local Ollama model.
-Tested on macOS (Apple silicon) with Python 3.11.
+Requirements: Python 3.11+, about 1.5 GB of disk for Python packages, about 2 GB for the reranker and gate models,
+plus about 5 GB for a local Ollama model. Tested on macOS (Apple silicon, 16 GB RAM) with Python 3.11; with Llama 3.1
+8B and the Laya gate both loaded, 16 GB is tight, so close other large apps or set `RERANK_GATE=none`.
 
 ```bash
-git clone https://github.com/<your-username>/researchmind-ai.git
+git clone https://github.com/luba-alqaysi/researchmind-ai.git
 cd researchmind-ai
 
 # Option A: uv (fast)
@@ -159,7 +182,10 @@ The first run downloads the embedding model (about 90 MB) from Hugging Face.
 
 ## Configuration
 
-All settings live in `.env` (see `.env.example`); the provider, model and top-k can also be changed in the sidebar.
+All settings live in `.env` (see `.env.example`; the defaults below are its values); the provider, model and top-k can
+also be changed in the sidebar. If the four `RERANK*` variables are not set at all, the app uses plain cosine search,
+which needs no extra model downloads. The ms-marco reranker (about 90 MB) and Laya (about 1.7 GB) are downloaded from
+Hugging Face on first use; Laya needs the optional `laya` package from `requirements.txt`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -176,16 +202,24 @@ All settings live in `.env` (see `.env.example`); the provider, model and top-k 
 | `MIN_SIMILARITY` | `0.30` | Below this best-passage similarity, answer "insufficient evidence" without calling the LLM |
 | `SKIP_REFERENCES` | `true` | Drop bibliography text before indexing |
 | `BALANCE_DOCUMENTS` | `true` | With several papers in scope, give each relevant paper at least one passage |
+| `RERANKER` | `ms-marco` | Second-stage reranker: `none`, `ms-marco`, `bge` or `laya` |
+| `RERANK_GATE` | `laya` | Separate model that judges the final passages for the evidence check; `none` lets the reranker judge |
+| `RERANK_CANDIDATES` | `20` | Passages fetched by cosine search before reranking |
+| `RERANK_MIN_SCORE` | `0.35` | With a reranker or gate active, this 0–1 relevance cutoff replaces `MIN_SIMILARITY` |
 
 ## Evaluation
 
-All numbers below were produced by `evaluation/evaluate_rag.py` on 2 November 2026 (Apple M4, 16 GB RAM) and are
-reproduced in [evaluation/RESULTS.md](evaluation/RESULTS.md), which the script generates. To reproduce:
+All numbers below were produced by `evaluation/evaluate_rag.py` between 2 and 5 November 2026 (Apple M4, 16 GB RAM)
+and are reproduced in [evaluation/RESULTS.md](evaluation/RESULTS.md), which the script generates. The retrieval
+experiments and the first end-to-end results use plain cosine search; reranking is evaluated in
+[From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix). To reproduce:
 
 ```bash
 python evaluation/download_papers.py
 python evaluation/evaluate_rag.py retrieval                 # no LLM needed, a few minutes
 python evaluation/evaluate_rag.py generation --provider ollama
+python evaluation/evaluate_rag.py rerank                    # compares rerankers and gates, no LLM needed
+python evaluation/evaluate_rag.py generation --provider ollama --reranker ms-marco --rerank-gate laya --rerank-min-score 0.35
 python evaluation/evaluate_rag.py generation --provider ollama --judge claude --judge-model claude-haiku-5-5   # optional judge
 ```
 
@@ -290,6 +324,60 @@ stopped by the system because the 16 GB machine ran out of memory. Run the comma
   research objective?" matched funding statements. Always including each paper's abstract and phrasing the queries the
   way papers do fixed most rows; one error remains and is visible in the screenshot above.
 
+### From a bug report to a measured fix
+
+**The bug.** On a 12-page paper, *"ok what about the sample size?"* returned "Insufficient evidence", although the
+passage stating the sample size was retrieved at rank 2. The cosine similarity of the best passage was 0.22, below
+the 0.30 cutoff: a short question produces a vague embedding, so it scores low against every passage. Lowering the
+cutoff would also let off-topic questions through.
+
+**The experiment.** Rerankers read the question and a passage together, which should handle short questions better.
+`python evaluation/evaluate_rag.py rerank` compares candidates on the 31 questions plus 15 short follow-up questions
+(*"what about the sample size?"*, *"what are the limitations?"*, ...) asked with a single-paper filter. No LLM is involved;
+each model rescores the 20 best cosine matches.
+
+| Configuration | MRR | Exact evidence phrase in top 5 | Short questions: evidence page in top 5 | Gate AUROC | Unanswerable refused before the LLM | Short questions wrongly refused | Time per question |
+|---|---|---|---|---|---|---|---|
+| Cosine only (cutoff 0.30) | 0.70 | 33% | 53% | 0.98 | 2 / 4 | **12 / 15** | 5 ms |
+| ms-marco MiniLM reranker | **0.90** | **70%** | **73%** | 1.00 | 4 / 4 | 14 / 15 | 0.08 s |
+| bge-reranker-base | 0.77 | 70% | 53% | 0.71 | 1 / 4 | 11 / 15 | 0.48 s |
+| Laya alone (ranks and judges) | 0.72 | 59% | 67% | 1.00 | 4 / 4 | 4 / 15 | 2.19 s |
+| **ms-marco ranks + Laya judges** | **0.90** | **70%** | **73%** | **1.00** | **4 / 4** | **4 / 15** | **0.78 s** |
+
+Gate AUROC measures how well the evidence score separates answerable from unanswerable questions (1.0 = perfectly).
+The refusal columns use, for each model, a cutoff that refuses no answerable full-length question (0.35 for the Laya
+gate); cosine-only uses its default of 0.30, where the LLM itself then declined the other 2 unanswerable questions.
+
+**What it showed.** No single model was best at both jobs. ms-marco ranked best but scored vague questions close to 0,
+so as a gate it refused nearly all of them. Laya judged relevance best, but ranked worse and was slow when scoring all
+20 candidates. Splitting the jobs gets ms-marco's ranking and Laya's judgement, and because Laya now scores only the
+final 5 to 8 passages, it costs about a third of Laya alone. On the original paper, the sample-size question now passes
+the gate and Llama answers it with the correct numbers and page citations.
+
+**End to end** (`llama3.1:8b` writing the answers, same 31 questions):
+
+| Metric | Cosine only | ms-marco | Laya | **ms-marco + Laya gate** |
+|---|---|---|---|---|
+| Citation precision (citations on an evidence page) | 61.9% | 78.3% | 73.7% | 74.6% |
+| Answers citing an evidence page | 92.6% | 92.6% | 88.9% | 92.6% |
+| Answers with at least one citation | 100% | 96.3% | 92.6% | 96.3% |
+| Unanswerable refused / of those, without calling the LLM | 4 / 4 (2) | 4 / 4 (4) | 4 / 4 (4) | **4 / 4 (4)** |
+| Answerable questions wrongly refused | 0 / 27 | 0 / 27 | 0 / 27 | **0 / 27** |
+| Citations to non-existent sources | 0 | 0 | 0 | 0 |
+
+The hybrid keeps ms-marco's citation gains (75% against 62% for cosine only) and refuses every unanswerable question
+before the LLM is called, while also answering short follow-up questions. Its ranking is identical to ms-marco's; the
+small precision gap to ms-marco alone comes from which passages of other papers the gate admits and from run-to-run
+variation in Llama's answers, which was not measured with repeated runs. With the gate, a question took 1.5 s of
+retrieval (median) and 16 s of generation on this machine with Llama loaded.
+
+**Caveats.** The cutoffs were chosen on the same small set, so they are optimistic; for the Laya gate any value from
+0.28 to 0.50 refuses all 4 unanswerable and no answerable question, and 0.35 sits inside that range. There are only 4
+unanswerable questions, Laya's probabilities were not recalibrated, and the times above were measured without the LLM
+loaded (with Llama 3.1 8B also in memory, a 16 GB machine swaps and everything slows down). Most of the answers that
+lost their citation wrote "According to S1" instead of "[S1]", a formatting issue that the citation parser could
+accept in future.
+
 ## Testing
 
 ```bash
@@ -338,11 +426,16 @@ researchmind-ai/
   still measured in the evaluation).
 - **Per-document passage guarantee.** For cross-paper questions, plain top-k often returns passages from a single paper.
   When several papers are in scope, each paper whose best passage clears the threshold gets at least one slot.
+- **Ranking and gating are separate jobs.** A good ranker puts the right passage first; a good gate tells "this
+  question is answerable from these passages" from "it is not". The evaluation showed that no single model was best at
+  both, so the pipeline accepts one model for each (see [From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix)).
+  The gate only scores the final top-k passages, which keeps a large gate model affordable.
 - **Embedding model in `st.cache_resource`, index in `st.session_state`.** The model loads once per server; each browser
   session has its own document library, and repeated questions never re-embed or rebuild anything.
 - **macOS OpenMP workaround.** The faiss-cpu and PyTorch wheels each ship `libomp`, and loading both aborts the process on
   macOS. `src/__init__.py` sets `KMP_DUPLICATE_LIB_OK=TRUE` on macOS only; a test checks that FAISS results still match
-  a NumPy reference with the real model loaded.
+  a NumPy reference with the real model loaded. PyTorch is imported before FAISS on macOS, because the other order
+  crashes the process when a Transformers model (the Laya gate) loads afterwards.
 
 ## Limitations
 
@@ -351,8 +444,8 @@ researchmind-ai/
   them may be answered poorly.
 - **Each question is answered independently.** The chat history is for display; follow-up questions such as "and its
   limitations?" are not rewritten using earlier turns.
-- **Retrieval is purely semantic.** Exact terms (gene names, accession numbers) can be missed by the small embedding model;
-  hybrid keyword + vector search would help.
+- **First-stage retrieval is purely semantic.** Exact terms (gene names, accession numbers) can be missed by the small
+  embedding model, and the reranker can only reorder what that search found; hybrid keyword + vector search would help.
 - **Grounding is not verification.** Citations are guaranteed to point at a retrieved passage, but the passage may not fully
   support the sentence it is attached to. The evaluation measures this, and the UI shows excerpts so users can check.
 - **Small evaluation set.** 31 questions over four papers, written for this project. The similarity threshold was tuned on
@@ -362,7 +455,8 @@ researchmind-ai/
 
 ## Future work
 
-- Hybrid BM25 + vector retrieval and a cross-encoder re-ranker.
+- Hybrid BM25 + vector retrieval.
+- Recalibrating the gate's probabilities on a larger, held-out question set.
 - Query rewriting for conversational follow-ups.
 - OCR (for example Tesseract) for scanned PDFs, and table-aware extraction.
 - Sentence-level claim verification (NLI) to flag citations that do not support their sentence.

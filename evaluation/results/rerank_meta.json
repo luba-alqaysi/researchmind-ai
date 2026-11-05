@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-05",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "top_k": 5,
+  "candidates": 20,
+  "full_questions": 31,
+  "short_questions": 15
+}

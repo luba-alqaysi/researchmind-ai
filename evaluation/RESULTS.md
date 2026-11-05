@@ -104,6 +104,24 @@ Number of questions whose best passage falls below each similarity threshold (de
 | 0.45 | 2.00 | 3.00 |
 | 0.50 | 3.00 | 4.00 |
 
+## Reranker comparison
+
+Last run 2026-11-05. Default chunking, top-k 5; rerankers rescore the 20 best embedding-search candidates. 31 full questions plus 15 short follow-up style questions ("what about the sample size?") asked with a single-paper filter. No LLM is involved.
+
+* **gate_auroc**: how well the evidence score separates answerable from unanswerable full questions (1.0 = perfectly, 0.5 = chance). Based on only 4 unanswerable questions.
+* **cutoff**: the highest evidence cutoff that refuses no answerable full question, chosen on this same set (optimistic). **unanswerable_refused** and **short_refused** are counted at that cutoff.
+* **short_refused_at_default**: short questions refused by the current default (cosine 0.30).
+* **ms_p50 / ms_p95**: retrieval plus reranking time per question on this machine.
+* **RANKER+GATE** rows (for example ms-marco+laya): the first model orders the candidates, the second judges only the final passages, and its score is the evidence score.
+
+| reranker | model | page_hit@5 | phrase_hit@5 | MRR | xdoc_coverage | short_page_hit@5 | short_MRR | gate_auroc | cutoff | unanswerable_refused | short_refused | ms_p50 | ms_p95 | short_refused_at_default |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| none | none | 0.963 | 0.333 | 0.702 | 1.000 | 0.533 | 0.343 | 0.981 | 0.410 | 3/4 | 15/15 | 4.818 | 97.896 | 12/15 |
+| ms-marco | cross-encoder/ms-marco-MiniLM-L6-v2 | 0.963 | 0.704 | 0.901 | 1.000 | 0.733 | 0.489 | 1.000 | 0.570 | 4/4 | 14/15 | 83.597 | 122.183 |  |
+| bge | BAAI/bge-reranker-base | 0.889 | 0.704 | 0.772 | 1.000 | 0.533 | 0.386 | 0.713 | 0.280 | 1/4 | 11/15 | 481.215 | 646.535 |  |
+| laya | convaiinnovations/laya | 0.963 | 0.593 | 0.717 | 1.000 | 0.667 | 0.397 | 1.000 | 0.530 | 4/4 | 5/15 | 2190.317 | 2706.790 |  |
+| ms-marco+laya | cross-encoder/ms-marco-MiniLM-L6-v2 + convaiinnovations/laya | 0.963 | 0.704 | 0.901 | 1.000 | 0.733 | 0.489 | 1.000 | 0.500 | 4/4 | 5/15 | 779.715 | 1032.119 |  |
+
 ## End-to-end generation
 
 * **citation_precision**: share of rendered citations whose document and page are a verified evidence page.
@@ -112,20 +130,20 @@ Number of questions whose best passage falls below each similarity threshold (de
 * **unanswerable_abstention_rate**: unanswerable questions correctly answered with 'insufficient evidence'.
 * **correctness / faithfulness**: LLM-judge scores (see README for caveats); absent when no judge was used.
 
-| metric /  | extractive / none | ollama / llama3.1:8b |
-|---|---|---|
-| judge | none | none |
-| date | 2026-11-02 | 2026-11-02 |
-| questions | 31 | 31 |
-| errors | 0 | 0 |
-| page_hit@k | 0.963 | 0.963 |
-| answers_with_citation | 1.000 | 1.000 |
-| citation_precision | 0.531 | 0.619 |
-| answers_citing_evidence_page | 0.852 | 0.926 |
-| invalid_citation_ids | 0 | 0 |
-| false_abstention_rate | 0.000 | 0.000 |
-| unanswerable_abstention_rate | 0.500 | 1.000 |
-| retrieval_ms_p50 | 3.954 | 124.386 |
-| generation_s_p50 | nan | 9.627 |
-| generation_s_p95 | nan | 21.349 |
-| truncated_answers | 0 | 0 |
+| metric | extractive / none (cutoff 0.3) | ollama / llama3.1:8b (cutoff 0.3) | ollama / llama3.1:8b + laya reranker | ollama / llama3.1:8b + ms-marco reranker | ollama / llama3.1:8b + ms-marco reranker + laya gate |
+|---|---|---|---|---|---|
+| judge | none | none | none | none | none |
+| date | 2026-11-02 | 2026-11-02 | 2026-11-04 | 2026-11-04 | 2026-11-05 |
+| questions | 31 | 31 | 31 | 31 | 31 |
+| errors | 0 | 0 | 0 | 0 | 0 |
+| page_hit@k | 0.963 | 0.963 | 0.963 | 0.963 | 0.963 |
+| answers_with_citation | 1.000 | 1.000 | 0.926 | 0.963 | 0.963 |
+| citation_precision | 0.531 | 0.619 | 0.737 | 0.783 | 0.746 |
+| answers_citing_evidence_page | 0.852 | 0.926 | 0.889 | 0.926 | 0.926 |
+| invalid_citation_ids | 0 | 0 | 0 | 0 | 0 |
+| false_abstention_rate | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| unanswerable_abstention_rate | 0.500 | 1.000 | 1.000 | 1.000 | 1.000 |
+| retrieval_ms_p50 | 3.954 | 124.386 | 7497.691 | 506.426 | 1465.354 |
+| generation_s_p50 | nan | 9.627 | 37.810 | 39.444 | 15.802 |
+| generation_s_p95 | nan | 21.349 | 52.965 | 51.427 | 25.226 |
+| truncated_answers | 0 | 0 | 0 | 0 | 0 |

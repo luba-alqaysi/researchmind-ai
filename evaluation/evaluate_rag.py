@@ -16,6 +16,19 @@ Two modes:
       python evaluation/evaluate_rag.py generation --provider ollama
       python evaluation/evaluate_rag.py generation --provider ollama --judge claude --judge-model claude-haiku-5-5
 
+  rerank      No LLM needed. Compares rerankers (none, ms-marco, bge, laya) on
+              retrieval quality, the insufficient-evidence check, and latency,
+              including short follow-up style questions ("what about the sample
+              size?") asked with a single-paper filter. "RANKER+GATE" (for
+              example ms-marco+laya) ranks with one model and lets a second
+              model judge the final passages. Rows of earlier runs with other
+              names are kept, so configurations can be added one at a time.
+
+      python evaluation/evaluate_rag.py rerank
+      python evaluation/evaluate_rag.py rerank --rerankers ms-marco+laya
+      python evaluation/evaluate_rag.py generation --provider ollama --reranker laya --rerank-min-score 0.5
+      python evaluation/evaluate_rag.py generation --provider ollama --reranker ms-marco --rerank-gate laya --rerank-min-score 0.35
+
   report      Rebuild evaluation/RESULTS.md from the saved result files.
 
       python evaluation/evaluate_rag.py report
@@ -45,6 +58,7 @@ from src.config import Settings  # noqa: E402
 from src.embeddings import Embedder  # noqa: E402
 from src.llm_client import LLMError, get_llm_client  # noqa: E402
 from src.rag_pipeline import RAGPipeline  # noqa: E402
+from src.reranker import RERANKERS, get_reranker  # noqa: E402
 
 PAPERS_DIR = ROOT / "sample_data" / "papers"
 QUESTIONS = Path(__file__).with_name("evaluation_questions.csv")
@@ -67,11 +81,17 @@ def load_questions() -> pd.DataFrame:
     return df
 
 
-def build_pipeline(settings: Settings, embedder: Embedder) -> RAGPipeline:
+def parse_spec(spec: str) -> tuple[str, str]:
+    """"ms-marco+laya" -> ("ms-marco", "laya"); "laya" -> ("laya", "none")."""
+    ranker, _, gate = spec.partition("+")
+    return ranker, gate or "none"
+
+
+def build_pipeline(settings: Settings, embedder: Embedder, reranker=None, gate=None) -> RAGPipeline:
     papers = sorted(PAPERS_DIR.glob("*.pdf"))
     if not papers:
         sys.exit("No papers found. Run: python evaluation/download_papers.py")
-    pipeline = RAGPipeline(settings, embedder)
+    pipeline = RAGPipeline(settings, embedder, reranker, gate)
     for path in papers:
         result = pipeline.ingest_pdf(path.read_bytes(), path.name)
         if not result.ok:
@@ -220,13 +240,18 @@ def run_generation(args) -> None:
         chunk_overlap=args.overlap if args.overlap is not None else base.chunk_overlap,
         top_k=args.top_k or base.top_k,
         balance_documents=base.balance_documents and not args.no_balance,
+        reranker=args.reranker,
+        rerank_gate=args.rerank_gate,
+        rerank_min_score=args.rerank_min_score,
+        min_similarity=args.min_similarity if args.min_similarity is not None else base.min_similarity,
     )
     llm = get_llm_client(args.provider, settings, model=args.model)
     judge = get_llm_client(args.judge, settings, model=args.judge_model) if args.judge != "none" else None
     if judge is not None and judge.provider == llm.provider and judge.model == llm.model:
         print("WARNING: the judge is the same model as the system under test (self-grading bias).")
 
-    pipeline = build_pipeline(settings, Embedder(settings.embedding_model))
+    pipeline = build_pipeline(settings, Embedder(settings.embedding_model), get_reranker(settings.reranker),
+                              get_reranker(settings.rerank_gate))
     print(f"Indexed {len(pipeline.documents)} papers, {len(pipeline.store)} chunks. "
           f"Running {len(questions)} questions with {llm.provider}/{llm.model}…")
 
@@ -270,6 +295,12 @@ def run_generation(args) -> None:
 
     df = pd.DataFrame(records)
     suffix = "" if settings.balance_documents else "_nobalance"
+    if settings.reranker != "none":
+        suffix += f"_rr-{settings.reranker}"
+    if settings.rerank_gate != "none":
+        suffix += f"_gate-{settings.rerank_gate}"
+    if settings.reranker == settings.rerank_gate == "none" and args.min_similarity is not None:
+        suffix += f"_cut{settings.min_similarity:g}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}{suffix}")
     RESULTS_DIR.mkdir(exist_ok=True)
     df.to_csv(RESULTS_DIR / f"generation_{tag}_raw.csv", index=False)  # gitignored (contains paper text)
@@ -281,6 +312,10 @@ def run_generation(args) -> None:
         "judge": f"{judge.provider}/{judge.model}" if judge else "none",
         "chunk_size": settings.chunk_size, "overlap": settings.chunk_overlap, "top_k": settings.top_k,
         "balance_documents": settings.balance_documents, "min_similarity": settings.min_similarity,
+        "reranker": settings.reranker,
+        "rerank_gate": settings.rerank_gate,
+        "rerank_min_score": (settings.rerank_min_score
+                             if settings.reranker != "none" or settings.rerank_gate != "none" else None),
         "questions": int(len(df)), "errors": int(len(df) - len(ok)),
         "answerable": int(len(a)), "unanswerable": int(len(u)),
         "page_hit@k": float(a.page_hit.mean()) if len(a) else None,
@@ -307,6 +342,135 @@ def run_generation(args) -> None:
         })
     (RESULTS_DIR / f"generation_{tag}.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
+    write_report()
+
+
+# ------------------------------------------------------------------ rerank
+SHORT_TEMPLATES = {
+    "sample_size": "ok what about the sample size?",
+    "limitations": "what are the limitations?",
+    "methodology": "which methods did they use?",
+    "findings": "what did they find?",
+}
+
+
+def short_questions(questions: pd.DataFrame) -> pd.DataFrame:
+    """Short, follow-up style questions, each asked with a single-paper filter.
+
+    They reuse the verified evidence of the full questions: for each paper and
+    question type, the evidence is the union of that type's evidence pages and
+    phrases in that paper. They reproduce a failure seen in real use, where a
+    short question scored below the similarity cutoff although the right passage
+    had been retrieved."""
+    rows = []
+    single = questions[questions.answerable & (questions.doc_name != "ALL")]
+    for (doc, qtype), group in single.groupby(["doc_name", "type"]):
+        if qtype not in SHORT_TEMPLATES:
+            continue
+        evidence = {e for ev in group.evidence for e in ev if e[0] == doc}
+        rows.append({
+            "id": f"S-{doc.split('.')[0]}-{qtype}", "type": qtype, "doc_name": doc,
+            "question": SHORT_TEMPLATES[qtype], "evidence": evidence,
+            "phrases": [p for ps in group.phrases for p in ps], "answerable": True,
+        })
+    return pd.DataFrame(rows)
+
+
+def auroc(positive: list[float], negative: list[float]) -> float:
+    """Probability that a random answerable question outscores a random unanswerable one."""
+    if not positive or not negative:
+        return float("nan")
+    wins = sum((p > n) + 0.5 * (p == n) for p in positive for n in negative)
+    return wins / (len(positive) * len(negative))
+
+
+def run_rerank(args) -> None:
+    import gc
+
+    # Cutoff 0 for the per-document guarantee, so every configuration returns the same passage budget
+    # whatever RERANK_MIN_SCORE says in .env; the evidence cutoffs are analysed from the saved scores.
+    questions, base = load_questions(), Settings.from_env().with_overrides(rerank_min_score=0.0)
+    short = short_questions(questions)
+    pipeline = build_pipeline(base, Embedder(base.embedding_model))
+    name_to_id = {info.doc_name: doc_id for doc_id, info in pipeline.documents.items()}
+    print(f"Indexed {len(pipeline.documents)} papers, {len(pipeline.store)} chunks; "
+          f"{len(questions)} full questions, {len(short)} short questions.")
+    summary, per_question, thresholds = [], [], []
+
+    for name in args.rerankers:
+        ranker_name, gate_name = parse_spec(name)
+        t0 = time.perf_counter()
+        reranker, gate = get_reranker(ranker_name), get_reranker(gate_name)
+        load_s = time.perf_counter() - t0
+        pipeline.reranker, pipeline.gate = reranker, gate
+        judged = pipeline.judge is not None
+        pipeline.retrieve("warm-up question about the study")  # first call compiles kernels / allocates
+        records = []
+        for set_name, df in (("full", questions), ("short", short)):
+            for row in df.itertuples():
+                scope = {name_to_id[row.doc_name]} if set_name == "short" else None
+                t1 = time.perf_counter()
+                retrieved = pipeline.retrieve(row.question, doc_ids=scope)
+                ms = (time.perf_counter() - t1) * 1000
+                m = retrieval_metrics(row, retrieved) if row.answerable else {}
+                best = max(r.gate_score for r in retrieved) if judged else retrieved[0].score
+                m.update(id=row.id, set=set_name, type=row.type, answerable=row.answerable, reranker=name,
+                         gate_score=best, ms=ms)
+                records.append(m)
+        m = pd.DataFrame(records)
+        per_question.append(m)
+        full, sh = m[m.set == "full"], m[m.set == "short"]
+        fa, fu = full[full.answerable], full[~full.answerable]
+        # Cutoff that refuses no answerable full-length question (picked on this same set,
+        # so it is optimistic; with 27 questions there is no room for a held-out split).
+        grid = np.round(np.arange(0.0, 1.0001, 0.01), 2)
+        cutoff = float(max(t for t in grid if (fa.gate_score < t).sum() == 0))
+        for t in grid:
+            thresholds.append({
+                "reranker": name, "threshold": t,
+                "answerable_refused": int((fa.gate_score < t).sum()),
+                "unanswerable_refused": int((fu.gate_score < t).sum()),
+                "short_refused": int((sh.gate_score < t).sum()),
+            })
+        row = {
+            "reranker": name,
+            "model": " + ".join(RERANKERS[n] for n in (ranker_name, gate_name) if n != "none") or "none",
+            "page_hit@5": fa.page_hit.mean(), "phrase_hit@5": fa.phrase_hit.mean(), "MRR": fa.rr.mean(),
+            "xdoc_coverage": fa[fa.type == "cross_document"].doc_coverage.mean(),
+            "short_page_hit@5": sh.page_hit.mean(), "short_MRR": sh.rr.mean(),
+            "gate_auroc": auroc(list(fa.gate_score), list(fu.gate_score)),
+            "cutoff": cutoff,
+            "unanswerable_refused": f"{int((fu.gate_score < cutoff).sum())}/{len(fu)}",
+            "short_refused": f"{int((sh.gate_score < cutoff).sum())}/{len(sh)}",
+            "ms_p50": float(np.median(m.ms)), "ms_p95": float(np.quantile(m.ms, 0.95)), "load_s": load_s,
+        }
+        if not judged:
+            row["short_refused_at_default"] = f"{int((sh.gate_score < base.min_similarity).sum())}/{len(sh)}"
+        summary.append(row)
+        print(f"{name:14s} page_hit={row['page_hit@5']:.3f} MRR={row['MRR']:.3f} short_page_hit={row['short_page_hit@5']:.3f} "
+              f"auroc={row['gate_auroc']:.3f} cutoff={cutoff:.2f} unans_refused={row['unanswerable_refused']} "
+              f"short_refused={row['short_refused']} ms_p50={row['ms_p50']:.0f}")
+        pipeline.reranker = pipeline.gate = None
+        del reranker, gate
+        gc.collect()
+
+    RESULTS_DIR.mkdir(exist_ok=True)
+
+    def save(df: pd.DataFrame, file_name: str) -> None:
+        """Replace this run's configurations in the saved file and keep the others."""
+        path = RESULTS_DIR / file_name
+        if path.exists():
+            old = pd.read_csv(path)
+            df = pd.concat([old[~old.reranker.isin(args.rerankers)], df], ignore_index=True)
+        df.to_csv(path, index=False)
+
+    save(pd.DataFrame(summary), "rerank_summary.csv")
+    save(pd.DataFrame(thresholds), "rerank_thresholds.csv")
+    save(pd.concat(per_question).drop(columns=["top_score"], errors="ignore"), "rerank_per_question.csv")
+    meta = {"date": dt.date.today().isoformat(), "embedding_model": base.embedding_model,
+            "top_k": base.top_k, "candidates": base.rerank_candidates,
+            "full_questions": int(len(questions)), "short_questions": int(len(short))}
+    (RESULTS_DIR / "rerank_meta.json").write_text(json.dumps(meta, indent=2))
     write_report()
 
 
@@ -358,6 +522,31 @@ def write_report() -> None:
             md_table(pd.read_csv(calib_path), ".2f"),
             "",
         ]
+    rr_path = RESULTS_DIR / "rerank_summary.csv"
+    if rr_path.exists():
+        meta_path = RESULTS_DIR / "rerank_meta.json"
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        rr = pd.read_csv(rr_path)
+        parts += [
+            "## Reranker comparison",
+            "",
+            f"Last run {meta.get('date', '?')}. Default chunking, top-k {meta.get('top_k', '?')}; rerankers rescore the "
+            f"{meta.get('candidates', '?')} best embedding-search candidates. {meta.get('full_questions', '?')} full "
+            f"questions plus {meta.get('short_questions', '?')} short follow-up style questions (\"what about the sample "
+            "size?\") asked with a single-paper filter. No LLM is involved.",
+            "",
+            "* **gate_auroc**: how well the evidence score separates answerable from unanswerable full questions "
+            "(1.0 = perfectly, 0.5 = chance). Based on only 4 unanswerable questions.",
+            "* **cutoff**: the highest evidence cutoff that refuses no answerable full question, chosen on this same "
+            "set (optimistic). **unanswerable_refused** and **short_refused** are counted at that cutoff.",
+            "* **short_refused_at_default**: short questions refused by the current default (cosine 0.30).",
+            "* **ms_p50 / ms_p95**: retrieval plus reranking time per question on this machine.",
+            "* **RANKER+GATE** rows (for example ms-marco+laya): the first model orders the candidates, the second "
+            "judges only the final passages, and its score is the evidence score.",
+            "",
+            md_table(rr.drop(columns=["load_s"]).fillna("")),
+            "",
+        ]
     gens = sorted(RESULTS_DIR.glob("generation_*.json"))
     if gens:
         parts += ["## End-to-end generation", ""]
@@ -369,8 +558,15 @@ def write_report() -> None:
             "unanswerable_correct_rate", "faithfulness_mean", "retrieval_ms_p50", "generation_s_p50",
             "generation_s_p95", "truncated_answers",
         ] if c in table]
-        transposed = table[keep].set_index(["provider", "model"]).T.reset_index().rename(columns={"index": "metric"})
-        transposed.columns = [c if isinstance(c, str) else f"{c[0]} / {c[1]}" for c in transposed.columns]
+        rr = table["reranker"].fillna("none") if "reranker" in table else pd.Series(["none"] * len(table))
+        gate = table["rerank_gate"].fillna("none") if "rerank_gate" in table else pd.Series(["none"] * len(table))
+        table["run"] = (table.provider + " / " + table.model + np.where(rr != "none", " + " + rr + " reranker", "")
+                        + np.where(gate != "none", " + " + gate + " gate", ""))
+        if "min_similarity" in table:
+            plain = (rr == "none") & (gate == "none")
+            table.loc[plain, "run"] += " (cutoff " + table.loc[plain, "min_similarity"].map("{:g}".format) + ")"
+        keep = ["run"] + [c for c in keep if c not in ("provider", "model")]
+        transposed = table[keep].set_index("run").T.reset_index().rename(columns={"index": "metric"})
         parts += [
             "* **citation_precision**: share of rendered citations whose document and page are a verified evidence page.",
             "* **answers_citing_evidence_page**: share of answerable questions with at least one citation to an evidence page.",
@@ -408,10 +604,20 @@ def main() -> None:
     g.add_argument("--top-k", type=int, default=None)
     g.add_argument("--no-balance", action="store_true", help="disable the per-document passage guarantee")
     g.add_argument("--limit", type=int, default=None, help="only the first N questions (smoke test)")
+    g.add_argument("--reranker", default="none", choices=["none", *RERANKERS])
+    g.add_argument("--rerank-gate", default="none", choices=["none", *RERANKERS],
+                   help="separate model that judges the final passages for the evidence check")
+    g.add_argument("--rerank-min-score", type=float, default=0.0, help="evidence cutoff on the gate or reranker score")
+    g.add_argument("--min-similarity", type=float, default=None, help="cosine evidence cutoff (no reranker)")
+
+    k = sub.add_parser("rerank", help="compare rerankers (no LLM)")
+    k.add_argument("--rerankers", nargs="+", default=["none", *RERANKERS, "ms-marco+laya"],
+                   help="names from: none, " + ", ".join(RERANKERS) + "; or RANKER+GATE, e.g. ms-marco+laya")
 
     sub.add_parser("report", help="rebuild RESULTS.md")
     args = parser.parse_args()
-    {"retrieval": run_retrieval, "generation": run_generation, "report": lambda _: write_report()}[args.mode](args)
+    {"retrieval": run_retrieval, "generation": run_generation, "rerank": run_rerank,
+     "report": lambda _: write_report()}[args.mode](args)
 
 
 if __name__ == "__main__":
