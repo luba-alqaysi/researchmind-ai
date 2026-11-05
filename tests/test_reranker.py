@@ -114,3 +114,26 @@ def test_gate_decides_the_per_document_guarantee(docs):
     docs.gate = KeywordReranker("60 subjects")  # only the paper's passage is relevant to the gate
     retrieved = docs.retrieve("what about the sample size?")
     assert [r.chunk.doc_name for r in retrieved] == ["paper.pdf"]
+
+
+def test_trace_records_the_gate_decision_and_stage_times(docs):
+    docs.reranker = KeywordReranker("60 subjects")
+    docs.gate = KeywordReranker("60 subjects")
+    paper = {d for d, i in docs.documents.items() if i.doc_name == "paper.pdf"}
+    answer = docs.ask("what about the sample size?", FakeLLM("60 subjects [S1]."), doc_ids=paper)
+    t = answer.trace
+    assert t.search_query == "what about the sample size?" and not t.rewritten and t.language == "en"
+    assert t.candidates == 2 and t.papers == 1 and t.reranker == "keyword" and t.gate == "keyword"
+    assert t.evidence.passed and t.evidence.score == 0.9 and t.evidence.role == "gate"
+    assert {"search_ms", "rerank_ms", "gate_ms", "generation_ms"} <= set(t.stage_ms)
+
+    docs.gate = KeywordReranker("no passage contains this")
+    answer = docs.ask("what about the sample size?", FakeLLM("not called"), doc_ids=paper)
+    assert not answer.trace.evidence.passed and "generation_ms" not in answer.trace.stage_ms
+
+
+def test_trace_without_reranker_uses_cosine(docs):
+    answer = docs.ask("what about the sample size?", FakeLLM("60 subjects [S1]."))
+    t = answer.trace
+    assert t.evidence.role == "cosine" and t.evidence.judge == "cosine similarity"
+    assert t.reranker is None and t.gate is None and t.papers == 2

@@ -30,6 +30,19 @@ class CitationResult:
     insufficient: bool = False
 
 
+# Small models sometimes write "According to S1" or "source S2" instead of "[S1]". Only these
+# explicit phrasings are accepted, so IDs such as "Figure S2" or "Table S1" quoted from a paper
+# are never mistaken for citations.
+_BARE = re.compile(
+    r"(\b(?:[Aa]ccording to|[Ff]rom|[Ss]ources?|[Ss]ee)\s+|(?:المصدر|المصادر|حسب|وفقاً ل|وفقا ل)\s*)"
+    r"(S\d+(?:\s*(?:,|and)\s*S\d+)*)(?![\w\]])"
+)
+
+
+def _bracket_bare_ids(answer: str) -> str:
+    return _BARE.sub(lambda m: f"{m.group(1)}[{m.group(2)}]", answer)
+
+
 def _expand(group: str) -> list[int]:
     """'S1, S3' -> [1, 3];  'S2-S4' -> [2, 3, 4]."""
     numbers: list[int] = []
@@ -61,6 +74,7 @@ def resolve_citations(answer: str, retrieved: list[RetrievedChunk]) -> CitationR
     if insufficient:
         answer = "**Insufficient evidence.** " + _INSUFFICIENT.sub("", answer, count=1).strip()
 
+    answer = _bracket_bare_ids(answer)
     cited: dict[int, Citation] = {}
     invalid: list[str] = []
 

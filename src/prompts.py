@@ -74,12 +74,46 @@ def format_sources(retrieved: list[RetrievedChunk]) -> str:
     return "<sources>\n" + "\n\n".join(blocks) + "\n</sources>"
 
 
-def build_qa_prompt(question: str, retrieved: list[RetrievedChunk]) -> str:
+LANGUAGE_NAMES = {"en": "English", "ar": "Arabic"}
+
+
+def build_qa_prompt(question: str, retrieved: list[RetrievedChunk], search_query: str | None = None,
+                    language: str = "en") -> str:
+    """``search_query`` is the standalone English form of the question (from query rewriting);
+    it is shown so the model can resolve follow-ups like "and the limitations?"."""
+    interpreted = ""
+    if search_query and search_query.strip() != question.strip():
+        interpreted = f"Interpreted as: {search_query.strip()}\n"
+    instruction = "Answer the question using only the sources above, citing source IDs like [S1]."
+    if language != "en":
+        instruction += (f" Write the answer in {LANGUAGE_NAMES.get(language, language)}. Keep the source IDs "
+                        f"exactly as written, like [S1], and keep the marker {INSUFFICIENT_MARKER} in English.")
     return (
         f"{format_sources(retrieved)}\n\n"
-        f"Question: {question.strip()}\n\n"
-        "Answer the question using only the sources above, citing source IDs like [S1]."
+        f"Question: {question.strip()}\n{interpreted}\n"
+        f"{instruction}"
     )
+
+
+REWRITE_SYSTEM_PROMPT = """You turn a user's question about research papers into one standalone English search query.
+
+Rules:
+1. Use the earlier conversation only to resolve references such as "it", "they", "the study" or "what about the sample size?". If the new question names its own topic, study or paper, keep exactly that topic; never replace it with the topic of earlier turns.
+2. If the question is not in English, translate it into English.
+3. Keep technical terms, gene names, numbers and paper names exactly. Do not add facts and do not answer the question.
+4. If the question is already a standalone English question, return it unchanged.
+5. Reply with JSON only, in this form: {"search_query": "..."}"""
+
+
+def build_rewrite_prompt(question: str, history: list[tuple[str, str]], max_answer_chars: int = 400) -> str:
+    turns = []
+    for q, a in history:
+        a = " ".join(a.split())
+        if len(a) > max_answer_chars:
+            a = a[:max_answer_chars].rsplit(" ", 1)[0] + " ..."
+        turns.append(f"User: {q.strip()}\nAssistant: {a}")
+    conversation = "\n\n".join(turns) if turns else "(none)"
+    return f"Earlier conversation:\n{conversation}\n\nNew question: {question.strip()}\n\nJSON:"
 
 
 def build_comparison_prompt(doc_a: str, doc_b: str, retrieved: list[RetrievedChunk]) -> str:

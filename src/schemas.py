@@ -66,6 +66,41 @@ class Citation:
 
 
 @dataclass
+class EvidenceCheck:
+    """Layer-1 decision: is there enough evidence to call the LLM?"""
+
+    passed: bool
+    score: float | None  # best relevance (gate/reranker) or cosine similarity; None if nothing was retrieved
+    threshold: float
+    judge: str  # model that produced the score, or "cosine similarity"
+    role: str  # "gate" | "reranker" | "cosine"
+
+    @property
+    def detail(self) -> str:
+        if self.score is None:
+            return "no passages were found"
+        if self.role == "cosine":
+            return f"best passage similarity {self.score:.2f}, threshold {self.threshold:.2f}"
+        return (f"best passage relevance {self.score:.2f} from the {self.judge} {self.role}, "
+                f"threshold {self.threshold:.2f}")
+
+
+@dataclass
+class Trace:
+    """What the pipeline did for one question, for display and debugging."""
+
+    search_query: str  # the text actually searched (the rewritten query when rewriting happened)
+    rewritten: bool = False
+    language: str = "en"  # language of the question and the answer: "en" | "ar"
+    candidates: int = 0  # passages scored before the top-k cut
+    papers: int = 0  # documents in scope
+    reranker: str | None = None
+    gate: str | None = None
+    evidence: EvidenceCheck | None = None
+    stage_ms: dict[str, float] = field(default_factory=dict)  # rewrite, search, rerank, gate, generation
+
+
+@dataclass
 class RAGAnswer:
     question: str
     answer: str  # markdown with verified citations rendered
@@ -78,3 +113,4 @@ class RAGAnswer:
     invalid_source_ids: list[str] = field(default_factory=list)
     timings: dict[str, float] = field(default_factory=dict)  # milliseconds
     warnings: list[str] = field(default_factory=list)
+    trace: Trace | None = None

@@ -21,8 +21,9 @@ from src.prompts import (
     build_comparison_prompt,
     build_qa_prompt,
 )
+from src.query_rewriter import detect_language, needs_rewrite, rewrite_query
 from src.reranker import Reranker
-from src.schemas import RAGAnswer, RetrievedChunk
+from src.schemas import EvidenceCheck, RAGAnswer, RetrievedChunk, Trace
 from src.text_chunker import chunk_document
 from src.vector_store import VectorStore
 
@@ -109,14 +110,20 @@ class RAGPipeline:
         self.documents.clear()
 
     # ------------------------------------------------------------- retrieval
-    def retrieve(self, question: str, doc_ids: set[str] | None = None, top_k: int | None = None) -> list[RetrievedChunk]:
+    def retrieve(self, question: str, doc_ids: set[str] | None = None, top_k: int | None = None,
+                 timings: dict[str, float] | None = None) -> list[RetrievedChunk]:
         """Top-k semantic search. When several documents are in scope, each one
         whose best chunk clears the similarity threshold is guaranteed at least one
-        slot, so cross-document questions are not dominated by a single paper."""
+        slot, so cross-document questions are not dominated by a single paper.
+
+        If ``timings`` is given, it receives per-stage times in ms (search, rerank, gate)
+        and the number of candidates scored."""
+        timings = {} if timings is None else timings
         k = top_k or self.settings.top_k
+        t0 = time.perf_counter()
         query = self.embedder.embed_query(question)
         if self.judge is not None:
-            return self._retrieve_reranked(question, query, doc_ids, k)
+            return self._retrieve_reranked(question, query, doc_ids, k, timings, t0)
         results = self.store.search(query, k, doc_ids=doc_ids)
         scope = doc_ids or self.store.doc_ids
         if self.settings.balance_documents and len(scope) > 1:
@@ -128,6 +135,8 @@ class RAGPipeline:
             results.sort(key=lambda r: r.score, reverse=True)
             for rank, r in enumerate(results, start=1):
                 r.rank = rank
+        timings["search_ms"] = (time.perf_counter() - t0) * 1000
+        timings["candidates"] = len(results)
         return results
 
     @property
@@ -135,7 +144,8 @@ class RAGPipeline:
         """The model whose score decides whether there is enough evidence: the gate if set, else the reranker."""
         return self.gate or self.reranker
 
-    def _retrieve_reranked(self, question: str, query, doc_ids: set[str] | None, k: int) -> list[RetrievedChunk]:
+    def _retrieve_reranked(self, question: str, query, doc_ids: set[str] | None, k: int,
+                           timings: dict[str, float], t0: float) -> list[RetrievedChunk]:
         """Embedding search, then an optional reranker reorders the candidates and the top k are kept.
 
         The judge (gate, or the reranker itself) scores the passages that may be shown to the LLM;
@@ -149,11 +159,15 @@ class RAGPipeline:
             present = {c.chunk.doc_id for c in candidates}
             for doc_id in scope - present:
                 candidates += self.store.search(query, 1, doc_ids={doc_id})
+        timings["search_ms"] = (time.perf_counter() - t0) * 1000
+        timings["candidates"] = len(candidates)
         if not candidates:
             return []
         if self.reranker is not None:
+            t1 = time.perf_counter()
             for c, s in zip(candidates, self.reranker.score(question, [c.chunk.text for c in candidates])):
                 c.rerank_score = s
+            timings["rerank_ms"] = (time.perf_counter() - t1) * 1000
         candidates.sort(key=_rank_key, reverse=True)
         results = candidates[:k]
         extra = []  # each missing document's best candidate, admitted only if the judge finds it relevant
@@ -165,8 +179,10 @@ class RAGPipeline:
                     extra.append(best)
         judged = results + extra
         if self.gate is not None:
+            t2 = time.perf_counter()
             for c, s in zip(judged, self.gate.score(question, [c.chunk.text for c in judged])):
                 c.gate_score = s
+            timings["gate_ms"] = (time.perf_counter() - t2) * 1000
         else:
             for c in judged:
                 c.gate_score = c.rerank_score
@@ -176,19 +192,18 @@ class RAGPipeline:
             r.rank = rank
         return results
 
-    def evidence_check(self, retrieved: list[RetrievedChunk]) -> tuple[bool, str]:
-        """Layer 1 of insufficient-evidence handling: (enough evidence?, explanation).
+    def evidence_check(self, retrieved: list[RetrievedChunk]) -> EvidenceCheck:
+        """Layer 1 of insufficient-evidence handling: is there enough evidence to call the LLM?
         Uses the judge's relevance score when a reranker or gate is active, otherwise cosine similarity."""
-        if not retrieved:
-            return False, "no passages were found"
         if self.judge is not None:
-            best, threshold = max(r.gate_score for r in retrieved), self.settings.rerank_min_score
-            role = "gate" if self.gate is not None else "reranker"
-            detail = f"best passage relevance {best:.2f} from the {self.judge.name} {role}, threshold {threshold:.2f}"
+            threshold = self.settings.rerank_min_score
+            judge, role = self.judge.name, ("gate" if self.gate is not None else "reranker")
+            best = max((r.gate_score for r in retrieved), default=None)
         else:
-            best, threshold = retrieved[0].score, self.settings.min_similarity
-            detail = f"best passage similarity {best:.2f}, threshold {threshold:.2f}"
-        return best >= threshold, detail
+            threshold, judge, role = self.settings.min_similarity, "cosine similarity", "cosine"
+            best = retrieved[0].score if retrieved else None
+        return EvidenceCheck(passed=best is not None and best >= threshold, score=best,
+                             threshold=threshold, judge=judge, role=role)
 
     def _fit_context(self, retrieved: list[RetrievedChunk]) -> tuple[list[RetrievedChunk], list[str]]:
         kept, total = [], 0
@@ -209,7 +224,10 @@ class RAGPipeline:
         llm: LLMClient,
         doc_ids: set[str] | None = None,
         top_k: int | None = None,
+        history: list[tuple[str, str]] | None = None,
     ) -> RAGAnswer:
+        """Answer one question. ``history`` holds earlier (question, answer) turns; with it, or with
+        a non-English question, the question is first rewritten into a standalone English search query."""
         question = question.strip()
         if not question:
             raise ValueError("Please enter a question.")
@@ -221,32 +239,64 @@ class RAGPipeline:
                 raw_answer="", citations=[], retrieved=[], insufficient_evidence=True, **base,
             )
 
+        stages: dict[str, float] = {}
+        warnings: list[str] = []
+        language = detect_language(question)
+        search_query, rewritten = question, False
+        if self.settings.query_rewriting and needs_rewrite(language, history):
+            if isinstance(llm, ExtractiveClient):
+                if language != "en":
+                    warnings.append("Without a language model the Arabic question is searched as written, "
+                                    "which works poorly with English papers.")
+            else:
+                rewrite = rewrite_query(question, history, llm)
+                search_query, rewritten = rewrite.query, rewrite.rewritten
+                stages["rewrite_ms"] = rewrite.ms
+                if rewrite.error and language != "en":
+                    warnings.append("The question could not be translated for searching, so it was searched "
+                                    "as written.")
+
         t0 = time.perf_counter()
-        retrieved = self.retrieve(question, doc_ids, top_k)
+        retrieved = self.retrieve(search_query, doc_ids, top_k, timings=stages)
         retrieval_ms = (time.perf_counter() - t0) * 1000
         timings = {"retrieval_ms": retrieval_ms}
+        if "rewrite_ms" in stages:
+            timings["rewrite_ms"] = stages["rewrite_ms"]
+        candidates = int(stages.pop("candidates", 0))
+        check = self.evidence_check(retrieved)
+        trace = Trace(
+            search_query=search_query, rewritten=rewritten, language=language, candidates=candidates,
+            papers=len(doc_ids or self.store.doc_ids),
+            reranker=self.reranker.name if self.reranker is not None else None,
+            gate=self.gate.name if self.gate is not None else None,
+            evidence=check, stage_ms=stages,
+        )
+        base["trace"] = trace
 
         # Layer 1: if nothing is even moderately relevant, do not ask the LLM at all.
-        enough, detail = self.evidence_check(retrieved)
-        if not enough:
+        if not check.passed:
+            if language == "ar":
+                text = ("**الأدلة غير كافية.** لا يبدو أن الأوراق المرفوعة تحتوي على معلومات تجيب عن هذا السؤال "
+                        f"({check.detail}). جرّب إعادة صياغة السؤال أو اختيار أوراق أخرى.")
+            else:
+                text = ("**Insufficient evidence.** The uploaded documents do not appear to contain information "
+                        f"relevant to this question ({check.detail}). Try rephrasing or selecting other documents.")
             return RAGAnswer(
-                answer=(
-                    "**Insufficient evidence.** The uploaded documents do not appear to contain information "
-                    f"relevant to this question ({detail}). Try rephrasing or selecting other documents."
-                ),
-                raw_answer="", citations=[], retrieved=retrieved, insufficient_evidence=True,
-                timings=timings, **base,
+                answer=text, raw_answer="", citations=[], retrieved=retrieved, insufficient_evidence=True,
+                timings=timings, warnings=warnings, **base,
             )
 
-        retrieved, warnings = self._fit_context(retrieved)
+        retrieved, fit_warnings = self._fit_context(retrieved)
+        warnings += fit_warnings
 
         if isinstance(llm, ExtractiveClient):
             return self._extractive_answer(retrieved, timings, warnings, base)
 
         t1 = time.perf_counter()
-        response = llm.generate(SYSTEM_PROMPT, build_qa_prompt(question, retrieved))
+        response = llm.generate(SYSTEM_PROMPT, build_qa_prompt(question, retrieved, search_query, language))
         timings["generation_ms"] = (time.perf_counter() - t1) * 1000
         timings["total_ms"] = retrieval_ms + timings["generation_ms"]
+        stages["generation_ms"] = timings["generation_ms"]
 
         # Layer 2: the model may itself report insufficient evidence.
         result = resolve_citations(response.text, retrieved)

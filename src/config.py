@@ -60,6 +60,8 @@ class Settings:
     # (e.g. reranker="ms-marco", rerank_gate="laya"). "none" means the reranker is also the gate.
     rerank_gate: str = "none"
     rerank_min_score: float = 0.0  # insufficient-evidence cutoff on the gate's (or reranker's) [0, 1] score
+    # Rewrite follow-up and non-English questions into a standalone English search query (one extra LLM call).
+    query_rewriting: bool = True
 
     @classmethod
     def from_env(cls, dotenv: bool = True) -> "Settings":
@@ -94,6 +96,7 @@ class Settings:
             rerank_candidates=int(_get("RERANK_CANDIDATES", str(d.rerank_candidates))),
             rerank_gate=_get("RERANK_GATE", d.rerank_gate).lower(),
             rerank_min_score=float(_get("RERANK_MIN_SCORE", str(d.rerank_min_score))),
+            query_rewriting=_get_bool("QUERY_REWRITING", d.query_rewriting),
         )
 
     def with_overrides(self, **kwargs) -> "Settings":
