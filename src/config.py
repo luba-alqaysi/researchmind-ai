@@ -53,6 +53,13 @@ class Settings:
     # min_similarity at least one slot (helps cross-document questions).
     balance_documents: bool = True
     max_context_chars: int = 20000  # cap on evidence text sent to the LLM
+    # Optional second-stage reranker (see src/reranker.py): "none", "ms-marco", "bge" or "laya".
+    reranker: str = "none"
+    rerank_candidates: int = 20  # passages fetched by embedding search before reranking
+    # Optional separate relevance gate: a second model that only judges the final top-k passages
+    # (e.g. reranker="ms-marco", rerank_gate="laya"). "none" means the reranker is also the gate.
+    rerank_gate: str = "none"
+    rerank_min_score: float = 0.0  # insufficient-evidence cutoff on the gate's (or reranker's) [0, 1] score
 
     @classmethod
     def from_env(cls, dotenv: bool = True) -> "Settings":
@@ -83,6 +90,10 @@ class Settings:
             skip_references=_get_bool("SKIP_REFERENCES", d.skip_references),
             balance_documents=_get_bool("BALANCE_DOCUMENTS", d.balance_documents),
             max_context_chars=int(_get("MAX_CONTEXT_CHARS", str(d.max_context_chars))),
+            reranker=_get("RERANKER", d.reranker).lower(),
+            rerank_candidates=int(_get("RERANK_CANDIDATES", str(d.rerank_candidates))),
+            rerank_gate=_get("RERANK_GATE", d.rerank_gate).lower(),
+            rerank_min_score=float(_get("RERANK_MIN_SCORE", str(d.rerank_min_score))),
         )
 
     def with_overrides(self, **kwargs) -> "Settings":

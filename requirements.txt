@@ -11,3 +11,6 @@ requests>=2.32
 # Optional cloud LLM providers (Ollama needs no extra package)
 google-genai>=1.0
 anthropic>=0.40
+
+# Optional relevance gate (RERANK_GATE=laya or RERANKER=laya); the ms-marco and bge rerankers need no extra package
+laya>=0.4.22

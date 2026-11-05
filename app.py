@@ -18,6 +18,7 @@ from src.config import Settings
 from src.embeddings import Embedder
 from src.llm_client import LLMError, get_llm_client, ollama_status
 from src.rag_pipeline import RAGPipeline
+from src.reranker import get_reranker
 from src.schemas import RAGAnswer
 
 st.set_page_config(page_title="ResearchMind AI", page_icon=":material/menu_book:", layout="wide")
@@ -58,6 +59,11 @@ def load_embedder(model_name: str) -> Embedder:
     return Embedder(model_name)
 
 
+@st.cache_resource(show_spinner="Loading the reranker model (first run downloads it)…")
+def load_reranker(name: str):
+    return get_reranker(name)
+
+
 def get_settings() -> Settings:
     if "settings" not in st.session_state:
         st.session_state.settings = Settings.from_env()
@@ -67,7 +73,10 @@ def get_settings() -> Settings:
 def get_pipeline() -> RAGPipeline:
     if "pipeline" not in st.session_state:
         settings = get_settings()
-        st.session_state.pipeline = RAGPipeline(settings, load_embedder(settings.embedding_model))
+        st.session_state.pipeline = RAGPipeline(
+            settings, load_embedder(settings.embedding_model),
+            load_reranker(settings.reranker), load_reranker(settings.rerank_gate),
+        )
     return st.session_state.pipeline
 
 
@@ -201,10 +210,18 @@ def sidebar(pipeline: RAGPipeline, settings: Settings) -> dict:
 
         with st.expander("Retrieval settings"):
             top_k = st.slider("Passages to retrieve (top-k)", 1, 10, settings.top_k)
+            ranked = settings.reranker != "none"
+            gated = settings.rerank_gate != "none"
+            if not ranked and not gated:
+                check = f"Questions whose best match scores below {settings.min_similarity:.2f}"
+            else:
+                judge = settings.rerank_gate if gated else settings.reranker
+                check = (f"Passages are reranked with the {settings.reranker} reranker. " if ranked else "")
+                check += (f"The {judge} model judges relevance; questions whose best "
+                          f"passage relevance is below {settings.rerank_min_score:.2f}")
             st.caption(
                 f"Chunk size {settings.chunk_size} chars, overlap {settings.chunk_overlap}. "
-                f"Questions whose best match scores below {settings.min_similarity:.2f} are answered "
-                "with 'insufficient evidence' without calling the LLM."
+                f"{check} are answered with 'insufficient evidence' without calling the LLM."
             )
 
         if st.session_state.history and st.button("Clear chat", width="stretch"):

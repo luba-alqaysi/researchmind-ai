@@ -48,6 +48,8 @@ class RetrievedChunk:
     chunk: Chunk
     score: float  # cosine similarity in [-1, 1]
     rank: int  # 1-based
+    rerank_score: float | None = None  # reranker relevance in [0, 1], when a reranker is active
+    gate_score: float | None = None  # relevance used by the evidence check, when a reranker or gate is active
 
 
 @dataclass

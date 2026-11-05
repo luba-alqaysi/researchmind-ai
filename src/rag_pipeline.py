@@ -21,9 +21,14 @@ from src.prompts import (
     build_comparison_prompt,
     build_qa_prompt,
 )
+from src.reranker import Reranker
 from src.schemas import RAGAnswer, RetrievedChunk
 from src.text_chunker import chunk_document
 from src.vector_store import VectorStore
+
+
+def _rank_key(r: RetrievedChunk) -> float:
+    return r.rerank_score if r.rerank_score is not None else r.score
 
 
 @dataclass
@@ -48,9 +53,12 @@ class IngestResult:
 
 
 class RAGPipeline:
-    def __init__(self, settings: Settings, embedder):
+    def __init__(self, settings: Settings, embedder, reranker: Reranker | None = None,
+                 gate: Reranker | None = None):
         self.settings = settings
         self.embedder = embedder
+        self.reranker = reranker  # reorders the candidates
+        self.gate = gate  # optional separate model that judges the final passages for the evidence check
         self.store = VectorStore(embedder.dim)
         self.documents: dict[str, DocumentInfo] = {}
 
@@ -107,6 +115,8 @@ class RAGPipeline:
         slot, so cross-document questions are not dominated by a single paper."""
         k = top_k or self.settings.top_k
         query = self.embedder.embed_query(question)
+        if self.judge is not None:
+            return self._retrieve_reranked(question, query, doc_ids, k)
         results = self.store.search(query, k, doc_ids=doc_ids)
         scope = doc_ids or self.store.doc_ids
         if self.settings.balance_documents and len(scope) > 1:
@@ -119,6 +129,66 @@ class RAGPipeline:
             for rank, r in enumerate(results, start=1):
                 r.rank = rank
         return results
+
+    @property
+    def judge(self) -> Reranker | None:
+        """The model whose score decides whether there is enough evidence: the gate if set, else the reranker."""
+        return self.gate or self.reranker
+
+    def _retrieve_reranked(self, question: str, query, doc_ids: set[str] | None, k: int) -> list[RetrievedChunk]:
+        """Embedding search, then an optional reranker reorders the candidates and the top k are kept.
+
+        The judge (gate, or the reranker itself) scores the passages that may be shown to the LLM;
+        its score drives the evidence check and the per-document guarantee. With a separate gate,
+        only the final passages are judged, so a slow but well-calibrated gate stays affordable."""
+        n = max(k, self.settings.rerank_candidates) if self.reranker is not None else k
+        candidates = self.store.search(query, n, doc_ids=doc_ids)
+        scope = doc_ids or self.store.doc_ids
+        balance = self.settings.balance_documents and len(scope) > 1
+        if balance:  # make sure every document in scope has at least one candidate
+            present = {c.chunk.doc_id for c in candidates}
+            for doc_id in scope - present:
+                candidates += self.store.search(query, 1, doc_ids={doc_id})
+        if not candidates:
+            return []
+        if self.reranker is not None:
+            for c, s in zip(candidates, self.reranker.score(question, [c.chunk.text for c in candidates])):
+                c.rerank_score = s
+        candidates.sort(key=_rank_key, reverse=True)
+        results = candidates[:k]
+        extra = []  # each missing document's best candidate, admitted only if the judge finds it relevant
+        if balance:
+            present = {r.chunk.doc_id for r in results}
+            for doc_id in scope - present:
+                best = next((c for c in candidates if c.chunk.doc_id == doc_id), None)
+                if best is not None:
+                    extra.append(best)
+        judged = results + extra
+        if self.gate is not None:
+            for c, s in zip(judged, self.gate.score(question, [c.chunk.text for c in judged])):
+                c.gate_score = s
+        else:
+            for c in judged:
+                c.gate_score = c.rerank_score
+        results += [c for c in extra if c.gate_score >= self.settings.rerank_min_score]
+        results.sort(key=_rank_key, reverse=True)
+        for rank, r in enumerate(results, start=1):
+            r.rank = rank
+        return results
+
+    def evidence_check(self, retrieved: list[RetrievedChunk]) -> tuple[bool, str]:
+        """Layer 1 of insufficient-evidence handling: (enough evidence?, explanation).
+        Uses the judge's relevance score when a reranker or gate is active, otherwise cosine similarity."""
+        if not retrieved:
+            return False, "no passages were found"
+        if self.judge is not None:
+            best, threshold = max(r.gate_score for r in retrieved), self.settings.rerank_min_score
+            role = "gate" if self.gate is not None else "reranker"
+            detail = f"best passage relevance {best:.2f} from the {self.judge.name} {role}, threshold {threshold:.2f}"
+        else:
+            best, threshold = retrieved[0].score, self.settings.min_similarity
+            detail = f"best passage similarity {best:.2f}, threshold {threshold:.2f}"
+        return best >= threshold, detail
 
     def _fit_context(self, retrieved: list[RetrievedChunk]) -> tuple[list[RetrievedChunk], list[str]]:
         kept, total = [], 0
@@ -156,14 +226,13 @@ class RAGPipeline:
         retrieval_ms = (time.perf_counter() - t0) * 1000
         timings = {"retrieval_ms": retrieval_ms}
 
-        # Layer 1: if nothing is even moderately similar, do not ask the LLM at all.
-        if not retrieved or retrieved[0].score < self.settings.min_similarity:
-            best = f"{retrieved[0].score:.2f}" if retrieved else "n/a"
+        # Layer 1: if nothing is even moderately relevant, do not ask the LLM at all.
+        enough, detail = self.evidence_check(retrieved)
+        if not enough:
             return RAGAnswer(
                 answer=(
                     "**Insufficient evidence.** The uploaded documents do not appear to contain information "
-                    f"relevant to this question (best passage similarity {best}, threshold "
-                    f"{self.settings.min_similarity:.2f}). Try rephrasing or selecting other documents."
+                    f"relevant to this question ({detail}). Try rephrasing or selecting other documents."
                 ),
                 raw_answer="", citations=[], retrieved=retrieved, insufficient_evidence=True,
                 timings=timings, **base,

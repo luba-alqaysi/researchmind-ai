@@ -14,10 +14,20 @@ Design notes
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-import faiss
-import numpy as np
+if sys.platform == "darwin":
+    # Load PyTorch's OpenMP runtime before the copy bundled with FAISS. With FAISS
+    # first, loading a transformers model afterwards (the Laya reranker) segfaults
+    # on macOS arm64; with torch first, both work.
+    try:
+        import torch  # noqa: F401
+    except ImportError:  # pragma: no cover - torch is a dependency of sentence-transformers
+        pass
+
+import faiss  # noqa: E402
+import numpy as np  # noqa: E402
 
 from src.schemas import Chunk, RetrievedChunk
 
