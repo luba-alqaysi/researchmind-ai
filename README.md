@@ -1,7 +1,3 @@
-
-
-
-
 # ResearchMind AI
 
 **An evidence-grounded research assistant for scientific papers, built with Retrieval-Augmented Generation (RAG).**
@@ -10,16 +6,14 @@ Upload research papers (PDF), ask questions in plain language, and get answers i
 document and page, with the supporting passage one click away. ResearchMind runs fully locally with
 [Ollama](https://ollama.com), or with Google Gemini or Anthropic Claude if you provide an API key.
 
-<p align="center">
-  <a href="assets/video/researchmind-pitch.mp4"><img src="assets/video/pitch-preview.gif" width="800"
-     alt="Preview of the pitch video: an answer with its source sentence highlighted, then an off-topic question refused by the evidence check"></a>
-  <br>
-  https://github.com/user-attachments/assets/e2b62caa-391a-4823-be6a-16ce3854f32c
-</p>
+**The idea in 30 seconds** (sound on):
+
+https://github.com/user-attachments/assets/e2b62caa-391a-4823-be6a-16ce3854f32c
 
 *The pitch video was made with [Remotion](https://www.remotion.dev) and a free, offline voice
 ([Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)). The app screens, paper text and numbers in it are real; the
-made-up citation in the opening is a labelled example.*
+made-up citation in the opening is a labelled example. The video file is also in the repository:
+[assets/video/researchmind-pitch.mp4](assets/video/researchmind-pitch.mp4).*
 
 **Highlights**
 
