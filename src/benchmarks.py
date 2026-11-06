@@ -56,8 +56,11 @@ def retrieval_results(results_dir: Path = RESULTS_DIR) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def generation_results(results_dir: Path = RESULTS_DIR) -> pd.DataFrame:
-    """End-to-end runs with the local Llama model, one row per retrieval configuration."""
+def generation_results(results_dir: Path = RESULTS_DIR, model: str | None = None) -> pd.DataFrame:
+    """End-to-end runs with local Ollama models, one row per (model, retrieval configuration).
+
+    ``used`` marks the configuration the app uses, with ``model`` if it has been evaluated,
+    otherwise with the most recently evaluated model. Labels name the model when several are present."""
     rows = []
     for path in sorted(results_dir.glob("generation_ollama_*.json")):
         run = json.loads(path.read_text())
@@ -74,12 +77,32 @@ def generation_results(results_dir: Path = RESULTS_DIR) -> pd.DataFrame:
             "invalid_citations": run.get("invalid_citation_ids"),
             "questions": run.get("questions"), "date": run.get("date"),
         })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    if df.model.nunique() > 1:
+        df["label"] = df.label + " (" + df.model + ")"
+    candidates = df[df.config == USED]
+    if not candidates.empty:
+        pick = candidates[candidates.model == model] if model in set(candidates.model) else candidates
+        latest = pick.sort_values("date").index[-1]
+        df["used"] = df.index == latest
+    return df
 
 
-def rewrite_results(results_dir: Path = RESULTS_DIR) -> pd.DataFrame:
-    path = results_dir / "rewrite_summary.csv"
-    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+def rewrite_results(results_dir: Path = RESULTS_DIR, model: str | None = None) -> pd.DataFrame:
+    """The follow-up and Arabic results for ``model`` if it has been evaluated, else the most recent run.
+    Adds a ``model`` column."""
+    runs = []
+    for path in results_dir.glob("rewrite_summary_*.csv"):
+        meta_path = path.with_name(path.name.replace("rewrite_summary_", "rewrite_meta_").replace(".csv", ".json"))
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        runs.append((meta.get("llm", "").split("/")[-1], meta.get("date", ""), path))
+    if not runs:
+        return pd.DataFrame()
+    chosen = [r for r in runs if r[0] == model] or runs
+    name, _, path = max(chosen, key=lambda r: r[1])
+    return pd.read_csv(path).assign(model=name)
 
 
 def _hits(row) -> str:
@@ -95,7 +118,8 @@ def rewrite_findings(df: pd.DataFrame) -> list[str]:
     plain, rewritten = rows.get(("follow_up", "as written")), rows.get(("follow_up", "rewritten"))
     if plain and rewritten:
         out.append(
-            f"Follow-up questions such as \"what about the sample size?\", asked without choosing a paper: the "
+            f"Follow-up questions such as \"what about the sample size?\", asked without choosing a paper"
+            f"{' (rewritten by ' + str(rewritten['model']) + ')' if 'model' in rewritten else ''}: the "
             f"evidence page was found for {_hits(plain)} when searched as written, and for {_hits(rewritten)} after "
             f"rewriting them with the conversation (median {rewritten['rewrite_s_p50']:.1f} s per rewrite); "
             f"<b>{int(rewritten['answerable_passed'])} of {int(rewritten['answerable'])}</b> rewritten questions then "

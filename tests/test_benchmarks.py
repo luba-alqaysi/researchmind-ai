@@ -55,3 +55,19 @@ def test_rewrite_findings_are_built_from_the_summary():
     assert "<b>11 of 12</b> answerable questions (1 wrongly refused), <b>10 of 11</b> in Arabic" in text
     assert "<b>12 of 15</b> rewritten questions then passed" in text and "<b>4 of 4</b> unanswerable" in text
     assert rewrite_findings(pd.DataFrame()) == []
+
+
+def test_results_are_kept_per_model_and_the_app_model_is_preferred(tmp_path):
+    import json as _json
+
+    for tag, model, date in [("ollama_llama3.1-8b", "llama3.1:8b", "2026-11-05"), ("ollama_qwen3.5-9b", "qwen3.5:9b", "2026-11-06")]:
+        pd.DataFrame([{"set": "arabic", "variant": "rewritten", "answerable": 12, "page_hit@5": 0.5}]).to_csv(
+            tmp_path / f"rewrite_summary_{tag}.csv", index=False)
+        (tmp_path / f"rewrite_meta_{tag}.json").write_text(_json.dumps({"llm": f"ollama/{model}", "date": date}))
+        (tmp_path / f"generation_ollama_{tag}_rr-ms-marco_gate-laya.json").write_text(_json.dumps(
+            {"model": model, "reranker": "ms-marco", "rerank_gate": "laya", "min_similarity": 0.3, "date": date,
+             "citation_precision": 0.7}))
+    assert rewrite_results(tmp_path, model="llama3.1:8b").model.iloc[0] == "llama3.1:8b"
+    assert rewrite_results(tmp_path).model.iloc[0] == "qwen3.5:9b"  # most recent when the model is unknown
+    gen = generation_results(tmp_path, model="llama3.1:8b")
+    assert gen[gen.used].model.tolist() == ["llama3.1:8b"] and gen.label.str.contains("(qwen3.5:9b)", regex=False).any()

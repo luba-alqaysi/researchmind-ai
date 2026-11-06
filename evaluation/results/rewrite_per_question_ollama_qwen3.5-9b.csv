@@ -1,0 +1,90 @@
+page_hit,phrase_hit,rr,doc_coverage,top_score,set,variant,id,answerable,query,evidence_score,passed,rewrite_ms
+False,False,0.0,0.0,0.11081067472696304,follow_up,as written,S-gut_microbiome_circadian-findings,True,what did they find?,0.6035,True,0.0
+True,True,1.0,1.0,0.6873364448547363,follow_up,rewritten,S-gut_microbiome_circadian-findings,True,What did the gut microbiome circadian study analyse?,0.7548,True,1642.4892919999365
+False,False,0.0,1.0,0.2638395428657532,follow_up,as written,S-gut_microbiome_circadian-methodology,True,which methods did they use?,0.5531,True,0.0
+True,False,1.0,1.0,0.7018485069274902,follow_up,rewritten,S-gut_microbiome_circadian-methodology,True,which methods did the gut microbiome circadian study analyse,0.8417,True,1550.831374999916
+False,False,0.0,0.0,0.3471444845199585,follow_up,as written,S-gut_microbiome_circadian-sample_size,True,ok what about the sample size?,0.8126,True,0.0
+True,True,1.0,1.0,0.7448760271072388,follow_up,rewritten,S-gut_microbiome_circadian-sample_size,True,Did the gut microbiome circadian study find a persistent circadian oscillator? ok what about the sample size?,0.7457,True,2307.9974580000453
+True,False,0.5,1.0,0.11081067472696304,follow_up,as written,S-immunotherapy_cohort_effects-findings,True,what did they find?,0.6035,True,0.0
+True,True,1.0,1.0,0.748772144317627,follow_up,rewritten,S-immunotherapy_cohort_effects-findings,True,what did they find in the cohort-effects study of gut microbiome cohorts and immune checkpoint blockade patients,0.8467,True,2141.975666999997
+True,False,0.5,1.0,0.16248451173305511,follow_up,as written,S-immunotherapy_cohort_effects-limitations,True,what are the limitations?,0.7964,True,0.0
+False,False,0.0,1.0,0.7266716957092285,follow_up,rewritten,S-immunotherapy_cohort_effects-limitations,True,limitations of cohort-effects study gut microbiome cohorts immune checkpoint blockade,0.5053,True,1745.084291000012
+True,False,0.5,1.0,0.2638395428657532,follow_up,as written,S-immunotherapy_cohort_effects-methodology,True,which methods did they use?,0.5531,True,0.0
+True,False,1.0,1.0,0.6738492846488953,follow_up,rewritten,S-immunotherapy_cohort_effects-methodology,True,which methods were used in the cohort-effects study pooling four public shotgun metagenomic cohorts of immune checkpoint blockade patients,0.7629,True,2310.6632910000826
+True,False,0.3333333333333333,1.0,0.3471444845199585,follow_up,as written,S-immunotherapy_cohort_effects-sample_size,True,ok what about the sample size?,0.8126,True,0.0
+True,True,0.5,1.0,0.6683570146560669,follow_up,rewritten,S-immunotherapy_cohort_effects-sample_size,True,sample size cohort-effects study microbiome sequencing,0.5747,True,1563.2657920000383
+False,False,0.0,0.0,0.11081067472696304,follow_up,as written,S-immunotherapy_generalisation-findings,True,what did they find?,0.6035,True,0.0
+False,False,0.0,1.0,0.7376577854156494,follow_up,rewritten,S-immunotherapy_generalisation-findings,True,benchmarking nine transcriptomic immunotherapy response prediction models COMPASS IRNet NetBio IKCScore TNBC-ICI PRECISE DeepGeneX Tres scCURE findings,0.7726,True,2820.473833000051
+True,True,0.3333333333333333,1.0,0.16248451173305511,follow_up,as written,S-immunotherapy_generalisation-limitations,True,what are the limitations?,0.7964,True,0.0
+False,False,0.0,1.0,0.662550151348114,follow_up,rewritten,S-immunotherapy_generalisation-limitations,True,limitations of immunotherapy response prediction models COMPASS IRNet NetBio IKCScore TNBC-ICI PRECISE DeepGeneX Tres scCURE,0.8591,True,2580.623542000012
+False,False,0.0,0.0,0.2638395428657532,follow_up,as written,S-immunotherapy_generalisation-methodology,True,which methods did they use?,0.5531,True,0.0
+True,False,0.25,1.0,0.4894094169139862,follow_up,rewritten,S-immunotherapy_generalisation-methodology,True,which methods were used for ICI prediction models on unseen cohorts,0.7894,True,1756.4551250000022
+False,False,0.0,0.0,0.3471444845199585,follow_up,as written,S-immunotherapy_generalisation-sample_size,True,ok what about the sample size?,0.8126,True,0.0
+False,False,0.0,1.0,0.6549896001815796,follow_up,rewritten,S-immunotherapy_generalisation-sample_size,True,sample size of nine immunotherapy response prediction models COMPASS IRNet NetBio IKCScore TNBC-ICI PRECISE DeepGeneX Tres scCURE,0.8057,True,2734.5060000000103
+False,False,0.0,0.0,0.11081067472696304,follow_up,as written,S-rnaseq_gene_clusters-findings,True,what did they find?,0.6035,True,0.0
+False,False,0.0,1.0,0.7064790725708008,follow_up,rewritten,S-rnaseq_gene_clusters-findings,True,what did they find in the gene clustering study using bulk mRNA-seq dataset of 105 controls and 61 subjects with late-stage AMD,0.3384,False,2423.462415999893
+False,False,0.0,0.0,0.16248451173305511,follow_up,as written,S-rnaseq_gene_clusters-limitations,True,what are the limitations?,0.7964,True,0.0
+True,True,1.0,1.0,0.544907808303833,follow_up,rewritten,S-rnaseq_gene_clusters-limitations,True,limitations gene clustering study bulk mRNA-seq dataset 105 controls Minnesota Grading System 1 61 subjects late-stage AMD Minnesota Grading System 4,0.4395,True,2403.4545829999843
+False,False,0.0,0.0,0.2638395428657532,follow_up,as written,S-rnaseq_gene_clusters-methodology,True,which methods did they use?,0.5531,True,0.0
+True,False,1.0,1.0,0.7092339992523193,follow_up,rewritten,S-rnaseq_gene_clusters-methodology,True,which methods were used in the gene clustering study with bulk mRNA-seq dataset of 105 controls and 61 subjects with late-stage AMD,0.8447,True,2298.4384159999536
+False,False,0.0,0.0,0.3471444845199585,follow_up,as written,S-rnaseq_gene_clusters-sample_size,True,ok what about the sample size?,0.8126,True,0.0
+True,False,0.5,1.0,0.622444748878479,follow_up,rewritten,S-rnaseq_gene_clusters-sample_size,True,sample size graphical gene clustering method Node2Vec+,0.8098,True,1620.569875000001
+True,True,1.0,1.0,0.5874598026275635,arabic,English original,A-R1,True,"What dataset was used in the gene clustering study, and how many controls and AMD subjects did it include?",0.792,True,0.0
+False,False,0.0,1.0,0.09081972390413284,arabic,as written,A-R1,True,ما مجموعة البيانات المستخدمة في دراسة تجميع الجينات، وكم عدد الأشخاص في المجموعة الضابطة ومرضى التنكس البقعي المرتبط بالعمر (AMD) الذين شملتهم؟,0.3163,False,0.0
+True,False,0.5,1.0,0.686102569103241,arabic,rewritten,A-R1,True,what is the dataset used in gene clustering study and how many people were included in the control group and age-related macular degeneration AMD patients,0.6762,True,2657.4167909998323
+True,True,1.0,1.0,0.5131725668907166,arabic,rewritten after a turn about another paper,A-R1,True,dataset used in gene aggregation study number of people in control group and age-related macular degeneration AMD patients,0.6205,True,5723.25375000014
+True,False,1.0,1.0,0.6127526760101318,arabic,English original,A-R2,True,Which algorithm was used to compute gene embeddings in the graphical gene clustering method?,0.8601,True,0.0
+False,False,0.0,1.0,0.30949538946151733,arabic,as written,A-R2,True,ما الخوارزمية المستخدمة لحساب تمثيلات الجينات (embeddings) في طريقة تجميع الجينات القائمة على الشبكات (graph-based)؟,0.1344,False,0.0
+True,True,1.0,1.0,0.755243718624115,arabic,rewritten,A-R2,True,algorithm used to calculate gene embeddings in graph-based gene clustering,0.8577,True,1375.2427500000977
+True,True,1.0,1.0,0.7444998025894165,arabic,rewritten after a turn about another paper,A-R2,True,algorithm calculate gene embeddings graph-based gene clustering,0.8625,True,4776.925000000119
+True,True,1.0,1.0,0.714913010597229,arabic,English original,A-R4,True,"What statistical tests compared the AMD gene clusterings with clusterings of random gene sets, and what did they show?",0.8089,True,0.0
+False,False,0.0,1.0,0.06702911108732224,arabic,as written,A-R4,True,ما الاختبارات الإحصائية التي قارنت تجميعات جينات AMD بتجميعات مجموعات جينات عشوائية، وماذا أظهرت؟,0.2441,False,0.0
+True,True,1.0,1.0,0.7443346381187439,arabic,rewritten,A-R4,True,statistical tests compared AMD gene clusters to random gene clusters and what did they show,0.7131,True,9424.383999999918
+True,True,1.0,1.0,0.6776074767112732,arabic,rewritten after a turn about another paper,A-R4,True,statistical tests compared AMD gene sets to random gene sets and what did they show,0.6688,True,2700.668417000088
+True,False,1.0,1.0,0.6005569696426392,arabic,English original,A-R6,True,What limitations or future work does the gene clustering paper mention?,0.8046,True,0.0
+False,False,0.0,1.0,0.06857292354106903,arabic,as written,A-R6,True,ما القيود أو الأعمال المستقبلية التي تذكرها ورقة تجميع الجينات؟,0.7515,True,0.0
+True,False,1.0,1.0,0.45799797773361206,arabic,rewritten,A-R6,True,limitations or future work mentioned in gene aggregation paper,0.624,True,1274.929375000056
+True,False,1.0,1.0,0.4141616225242615,arabic,rewritten after a turn about another paper,A-R6,True,limitations future work gene assembly paper,0.2362,False,3506.5009170000394
+True,True,1.0,1.0,0.6619423627853394,arabic,English original,A-C1,True,How many gut microbiome cohorts and patients were pooled in the cohort-effects study?,0.7103,True,0.0
+False,False,0.0,1.0,0.38099440932273865,arabic,as written,A-C1,True,كم عدد مجموعات بيانات ميكروبيوم الأمعاء وعدد المرضى الذين جُمعت بياناتهم معاً في دراسة تأثيرات المجموعات (cohort effects)؟,0.5956,True,0.0
+True,True,1.0,1.0,0.6161694526672363,arabic,rewritten,A-C1,True,how many gut microbiome datasets and how many patients were collected together in a study of cohort effects,0.8012,True,1604.980249999926
+True,True,1.0,1.0,0.6116279363632202,arabic,rewritten after a turn about another paper,A-C1,True,how many gut microbiome datasets and how many patients were collected together in cohort effects study,0.8016,True,2293.1623750000654
+True,False,1.0,1.0,0.5728777647018433,arabic,English original,A-C2,True,Which bioinformatics tools were used to process the microbiome sequencing reads in the cohort-effects study?,0.522,True,0.0
+False,False,0.0,1.0,0.3319133520126343,arabic,as written,A-C2,True,ما أدوات المعلوماتية الحيوية المستخدمة لمعالجة قراءات تسلسل الميكروبيوم في دراسة تأثيرات المجموعات (cohort effects)؟,0.8197,True,0.0
+True,False,1.0,1.0,0.596788763999939,arabic,rewritten,A-C2,True,bioinformatics tools for processing microbiome sequencing reads to analyze cohort effects,0.6805,True,1545.9757920000357
+True,False,0.5,1.0,0.6886217594146729,arabic,rewritten after a turn about another paper,A-C2,True,bioinformatics tools used to process microbiome sequencing reads in study of cohort effects,0.715,True,2236.6847920000055
+True,False,1.0,1.0,0.6224257946014404,arabic,English original,A-C6,True,What limitations does the cohort-effects study acknowledge?,0.8686,True,0.0
+False,False,0.0,1.0,0.37003231048583984,arabic,as written,A-C6,True,ما القيود التي تعترف بها دراسة تأثيرات المجموعات (cohort effects)؟,0.8096,True,0.0
+True,False,1.0,1.0,0.6448788642883301,arabic,rewritten,A-C6,True,limitations acknowledged by study of cohort effects,0.8628,True,3330.701916999942
+True,False,1.0,1.0,0.6255766749382019,arabic,rewritten after a turn about another paper,A-C6,True,cohort effects study limitations acknowledged,0.874,True,2521.180709000191
+True,True,1.0,1.0,0.5911436080932617,arabic,English original,A-G1,True,"How many immunotherapy response prediction models were benchmarked, and which ones?",0.8863,True,0.0
+False,False,0.0,1.0,0.06648034602403641,arabic,as written,A-G1,True,كم عدد نماذج التنبؤ بالاستجابة للعلاج المناعي التي جرت مقارنتها، وما هي هذه النماذج؟,0.9526,True,0.0
+True,True,0.5,1.0,0.6837319135665894,arabic,rewritten,A-G1,True,number of immunotherapy response prediction models compared and which models,0.8722,True,4453.671375000113
+True,True,0.5,1.0,0.6559361815452576,arabic,rewritten after a turn about another paper,A-G1,True,how many prediction models for response to immunotherapy were compared and what are these models,0.8109,True,1824.7183329999643
+True,True,0.3333333333333333,1.0,0.29018157720565796,arabic,English original,A-G3,True,How did the COMPASS foundation model perform compared with the end-to-end models?,0.8411,True,0.0
+False,False,0.0,1.0,0.1973864734172821,arabic,as written,A-G3,True,كيف كان أداء النموذج التأسيسي (foundation model) COMPASS مقارنةً بالنماذج الشاملة (end-to-end)؟,0.6068,True,0.0
+True,True,1.0,1.0,0.17658168077468872,arabic,rewritten,A-G3,True,how did the foundation model COMPASS perform compared to end-to-end models,0.8436,True,1645.9350000000086
+True,True,1.0,1.0,0.17658168077468872,arabic,rewritten after a turn about another paper,A-G3,True,how did the foundation model COMPASS perform compared to end-to-end models,0.8436,True,1746.3539580000997
+True,True,1.0,1.0,0.7017706632614136,arabic,English original,A-M1,True,What data did the gut microbiome circadian study analyse?,0.7839,True,0.0
+False,False,0.0,0.0,0.07861704379320145,arabic,as written,A-M1,True,ما البيانات التي حللتها دراسة الإيقاع اليومي لميكروبيوم الأمعاء؟,0.5339,True,0.0
+True,True,1.0,1.0,0.7648559212684631,arabic,rewritten,A-M1,True,circadian rhythm gut microbiome study data analyzed,0.5038,True,3310.5146660000173
+True,True,1.0,1.0,0.7648559212684631,arabic,rewritten after a turn about another paper,A-M1,True,circadian rhythm gut microbiome study data analyzed,0.5038,True,3255.988333000005
+True,True,1.0,1.0,0.79024738073349,arabic,English original,A-M2,True,Did the gut microbiome circadian study find a persistent circadian oscillator?,0.8086,True,0.0
+False,False,0.0,0.0,0.08009956032037735,arabic,as written,A-M2,True,هل وجدت دراسة الإيقاع اليومي لميكروبيوم الأمعاء مذبذباً يومياً مستمراً؟,0.7133,True,0.0
+True,True,1.0,1.0,0.7191939949989319,arabic,rewritten,A-M2,True,daily rhythm study gut microbiome continuous daily oscillator,0.7193,True,3894.1779589999896
+True,True,1.0,1.0,0.8063333034515381,arabic,rewritten after a turn about another paper,A-M2,True,did the circadian study of gut microbiome find a continuous daily oscillator,0.6829,True,1722.8425830001015
+True,True,1.0,1.0,0.4677274227142334,arabic,English original,A-X3,True,"Which studies analysed gut microbiome data, and in which organisms?",0.6273,True,0.0
+False,False,0.0,0.5,0.12783686816692352,arabic,as written,A-X3,True,أي الدراسات حللت بيانات ميكروبيوم الأمعاء، وفي أي كائنات حية؟,0.7156,True,0.0
+True,True,1.0,1.0,0.5285786986351013,arabic,rewritten,A-X3,True,studies analyzed gut microbiome data which organisms,0.239,False,2613.3085419999134
+,,,,,arabic,English original,A-U1,False,What dose of the probiotic supplement was given to participants in the randomized controlled trial?,0.1005,False,0.0
+,,,,,arabic,as written,A-U1,False,ما جرعة المكمّل البروبيوتيكي التي أُعطيت للمشاركين في التجربة العشوائية المضبوطة؟,0.6952,True,0.0
+,,,,,arabic,rewritten,A-U1,False,probiotic supplement dose randomized controlled trial participants,0.0933,False,3288.0539999998746
+,,,,,arabic,English original,A-U2,False,What was the IC50 of the drug compound in the cell viability assay?,0.1682,False,0.0
+,,,,,arabic,as written,A-U2,False,ما قيمة IC50 للمركب الدوائي في اختبار حيوية الخلايا؟,0.6954,True,0.0
+,,,,,arabic,rewritten,A-U2,False,IC50 value of drug compound in cell viability assay,0.5932,True,1179.508584000132
+,,,,,arabic,English original,A-U3,False,What magnetic field strength was the MRI scanner used for brain imaging?,0.1132,False,0.0
+,,,,,arabic,as written,A-U3,False,ما شدة المجال المغناطيسي لجهاز التصوير بالرنين المغناطيسي المستخدم لتصوير الدماغ؟,0.3576,True,0.0
+,,,,,arabic,rewritten,A-U3,False,what is the magnetic field strength of the MRI machine used for brain imaging,0.0823,False,1458.891666999989
+,,,,,arabic,English original,A-U4,False,How many retinal organoids were used in the CRISPR knockout screen?,0.2706,False,0.0
+,,,,,arabic,as written,A-U4,False,كم عدد عضيّات الشبكية (retinal organoids) المستخدمة في فحص الإقصاء الجيني بتقنية CRISPR؟,0.2159,False,0.0
+,,,,,arabic,rewritten,A-U4,False,how many retinal organoids were used in CRISPR gene knockout assay,0.2596,False,1559.2592499999682

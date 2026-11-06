@@ -46,8 +46,10 @@ def _title(title: str, note: str) -> None:
                 unsafe_allow_html=True)
 
 
-def render() -> None:
-    retrieval, generation, rewrite = retrieval_results(), generation_results(), rewrite_results()
+def render(model: str | None = None) -> None:
+    """``model``: the app's current local model; its results are shown when it has been evaluated."""
+    retrieval, generation = retrieval_results(), generation_results(model=model)
+    rewrite = rewrite_results(model=model)
     if retrieval.empty and generation.empty:
         st.info("No saved results yet. Run `python evaluation/evaluate_rag.py rerank` and "
                 "`python evaluation/evaluate_rag.py generation --provider ollama` to create them.")

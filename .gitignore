@@ -17,6 +17,7 @@ data/
 
 # Evaluation raw per-question outputs (contain paper text); summaries are committed
 evaluation/results/*_raw.csv
+evaluation/results/*_partial.pkl
 
 # OS / editors
 .DS_Store

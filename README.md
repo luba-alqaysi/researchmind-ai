@@ -175,8 +175,9 @@ answer easy to check:
 ## Quick start
 
 Requirements: Python 3.11+, about 1.5 GB of disk for Python packages, about 2 GB for the reranker and gate models,
-plus about 5 GB for a local Ollama model. Tested on macOS (Apple silicon, 16 GB RAM) with Python 3.11; with Llama 3.1
-8B and the Laya gate both loaded, 16 GB is tight, so close other large apps or set `RERANK_GATE=none`.
+plus about 6.6 GB for the default local model (`qwen3.5:9b`). Tested on macOS (Apple silicon, 16 GB RAM) with Python
+3.11; with an 8 to 9B local model and the Laya gate both loaded, 16 GB is tight, so close other large apps or set
+`RERANK_GATE=none`.
 
 ```bash
 git clone https://github.com/luba-alqaysi/researchmind-ai.git
@@ -197,7 +198,7 @@ cp .env.example .env
 
 | Provider | Setup |
 |---|---|
-| `ollama` (default) | Install [Ollama](https://ollama.com/download), then `ollama pull llama3.1:8b`. Free, local, private. |
+| `ollama` (default) | Install [Ollama](https://ollama.com/download), then `ollama pull qwen3.5:9b` (6.6 GB). Free, local, private. |
 | `gemini` | Create a key at [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. |
 | `claude` | Create a key in the [Anthropic Console](https://console.anthropic.com) and set `ANTHROPIC_API_KEY`. |
 | `extractive` | No LLM. Returns the most relevant passages with citations. |
@@ -227,7 +228,8 @@ Hugging Face on first use; Laya needs the optional `laya` package from `requirem
 | Variable | Default | Meaning |
 |---|---|---|
 | `LLM_PROVIDER` | `ollama` | `ollama`, `gemini`, `claude`, or `extractive` |
-| `OLLAMA_MODEL` | `llama3.1:8b` | Any model pulled into Ollama |
+| `OLLAMA_MODEL` | `qwen3.5:9b` | Any model pulled into Ollama (the evaluation covers `qwen3.5:9b` and `llama3.1:8b`) |
+| `OLLAMA_THINK` | `false` | Thinking mode for reasoning models such as Qwen3.5; off because it makes answers several times slower |
 | `OLLAMA_NUM_CTX` | `8192` | Context window sent to Ollama (its small default would silently truncate evidence) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model ID |
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Or `claude-sonnet-5-5`, `claude-haiku-5-5` |
@@ -247,10 +249,12 @@ Hugging Face on first use; Laya needs the optional `laya` package from `requirem
 
 ## Evaluation
 
-All numbers below were produced by `evaluation/evaluate_rag.py` between 2 and 5 November 2026 (Apple M4, 16 GB RAM)
+All numbers below were produced by `evaluation/evaluate_rag.py` between 2 and 6 November 2026 (Apple M4, 16 GB RAM)
 and are reproduced in [evaluation/RESULTS.md](evaluation/RESULTS.md), which the script generates. The retrieval
 experiments and the first end-to-end results use plain cosine search; reranking is evaluated in
-[From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix). To reproduce:
+[From a bug report to a measured fix](#from-a-bug-report-to-a-measured-fix). Most LLM results were measured with
+`llama3.1:8b`; the default model, `qwen3.5:9b`, was then run through the final configuration and is compared in
+[Llama 3.1 8B and Qwen3.5 9B](#llama-31-8b-and-qwen35-9b). To reproduce:
 
 ```bash
 python evaluation/download_papers.py
@@ -443,6 +447,36 @@ A rewrite took 1.5 to 1.8 s (median). With Llama answering the 16 Arabic questio
 - The Arabic questions are translations of questions in the main set, made with AI assistance for this project and
   not yet reviewed by a native speaker. A second pass reworded three ambiguous scientific terms before the run.
 - 16 questions are a small set, and the rewriting model is the same small local model that writes the answers.
+
+### Llama 3.1 8B and Qwen3.5 9B
+
+The default model was switched to `qwen3.5:9b` (thinking off) and run through the final configuration: ms-marco
+ranking, the Laya gate at 0.35, the same 31 questions and the same Arabic and follow-up sets.
+
+| Metric | `llama3.1:8b` | `qwen3.5:9b` |
+|---|---|---|
+| Citation precision (citations on an evidence page) | 74.6% | **77.1%** |
+| Answers citing an evidence page | 92.6% | **96.3%** |
+| Answers with at least one citation | 96.3% | **100%** |
+| Unanswerable refused / answerable wrongly refused | 4 / 4, 0 / 27 | 4 / 4, 0 / 27 |
+| Citations to non-existent sources | 0 | 0 |
+| Generation time, median | 15.8 s | **12.1 s** |
+| Follow-ups: evidence page in top 5 after rewriting | **12 / 15** | 10 / 15 |
+| Arabic: evidence page in top 5 after rewriting | 12 / 12 | 12 / 12 |
+| Arabic: unanswerable refused before the LLM / in the end | 4 / 4, 4 / 4 | 3 / 4, 4 / 4 |
+| Arabic: answered in Arabic, with citations | 11 / 12, 9 with citations | 11 / 12, 11 with citations |
+| Arabic: citation precision | 74% | 73% |
+| Rewrite time, median (Arabic) | 1.8 s | 2.1 s |
+
+**A bug the second model exposed.** In its first run Qwen found the evidence page for only 6 of the 12 Arabic
+questions: for half of them it resolved the question but returned it still in Arabic, which the English-only search
+cannot use. The rewriter already rejected non-English output, but then fell back to searching the Arabic text. It now
+sends such a reply back once with a translate-only prompt (`TRANSLATE_SYSTEM_PROMPT`), which brought Qwen to 12 of 12.
+Llama always returned English, so the retry never triggers for it and its results above are unchanged.
+
+**Reading the comparison.** Qwen cites better and answers faster on this machine; Llama resolves short follow-ups a
+little better (Qwen sometimes pasted the earlier question into the search query). Each model was run once, the sets are
+small, and differences of one or two questions are within run-to-run variation.
 
 ## Testing
 

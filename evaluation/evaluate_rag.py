@@ -265,8 +265,25 @@ def run_generation(args) -> None:
     print(f"Indexed {len(pipeline.documents)} papers, {len(pipeline.store)} chunks. "
           f"Running {len(questions)} questions with {llm.provider}/{llm.model}…")
 
+    suffix = "" if settings.balance_documents else "_nobalance"
+    if settings.reranker != "none":
+        suffix += f"_rr-{settings.reranker}"
+    if settings.rerank_gate != "none":
+        suffix += f"_gate-{settings.rerank_gate}"
+    if settings.reranker == settings.rerank_gate == "none" and args.min_similarity is not None:
+        suffix += f"_cut{settings.min_similarity:g}"
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}{suffix}")
+    RESULTS_DIR.mkdir(exist_ok=True)
+    # Each finished question is saved at once, so a crash or restart resumes where it stopped.
+    partial = RESULTS_DIR / f"generation_{tag}_partial.pkl"  # gitignored (contains paper text)
     records = []
+    if partial.exists():
+        records = [r for r in pd.read_pickle(partial) if not r.get("error")]
+        print(f"Resuming: {len(records)} questions already done ({partial.name}).")
+    done_ids = {r["id"] for r in records}
     for row in questions.itertuples():
+        if row.id in done_ids:
+            continue
         record = {"id": row.id, "type": row.type, "question": row.question, "answerable": row.answerable}
         try:
             answer = pipeline.ask(row.question, llm)
@@ -299,21 +316,14 @@ def run_generation(args) -> None:
             except LLMError as exc:
                 record["judge_error"] = str(exc)
         records.append(record)
+        pd.to_pickle(records, partial)
         gen = record.get("generation_ms")
         print(f"  {row.id}: citations={record['n_citations']} insufficient={record['insufficient']} "
               f"correctness={record.get('correctness', '-')} gen={(gen or 0) / 1000:.1f}s")
 
     df = pd.DataFrame(records)
-    suffix = "" if settings.balance_documents else "_nobalance"
-    if settings.reranker != "none":
-        suffix += f"_rr-{settings.reranker}"
-    if settings.rerank_gate != "none":
-        suffix += f"_gate-{settings.rerank_gate}"
-    if settings.reranker == settings.rerank_gate == "none" and args.min_similarity is not None:
-        suffix += f"_cut{settings.min_similarity:g}"
-    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}{suffix}")
-    RESULTS_DIR.mkdir(exist_ok=True)
     df.to_csv(RESULTS_DIR / f"generation_{tag}_raw.csv", index=False)  # gitignored (contains paper text)
+    partial.unlink(missing_ok=True)
 
     ok = df[df.get("error").isna()] if "error" in df else df
     a, u = ok[ok.answerable], ok[~ok.answerable]
@@ -566,8 +576,9 @@ def run_rewrite(args) -> None:
             summary[-1]["page_hit@5_without_turn"] = float(same.page_hit.mean())
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    m.to_csv(RESULTS_DIR / "rewrite_per_question.csv", index=False)
-    pd.DataFrame(summary).to_csv(RESULTS_DIR / "rewrite_summary.csv", index=False)  # saved before generation
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{llm.provider}_{llm.model}")  # one set of files per model
+    m.to_csv(RESULTS_DIR / f"rewrite_per_question_{tag}.csv", index=False)
+    pd.DataFrame(summary).to_csv(RESULTS_DIR / f"rewrite_summary_{tag}.csv", index=False)  # saved before generation
 
     if args.generate:
         gen = []
@@ -604,10 +615,10 @@ def run_rewrite(args) -> None:
             "unanswerable": int(len(u)), "unanswerable_refused": int(u.insufficient.sum()), "errors": errors,
         })
 
-    pd.DataFrame(summary).to_csv(RESULTS_DIR / "rewrite_summary.csv", index=False)
+    pd.DataFrame(summary).to_csv(RESULTS_DIR / f"rewrite_summary_{tag}.csv", index=False)
     meta = {"date": dt.date.today().isoformat(), "llm": f"{llm.provider}/{llm.model}", "reranker": base.reranker,
             "rerank_gate": base.rerank_gate, "cutoff": cutoff}
-    (RESULTS_DIR / "rewrite_meta.json").write_text(json.dumps(meta, indent=2))
+    (RESULTS_DIR / f"rewrite_meta_{tag}.json").write_text(json.dumps(meta, indent=2))
     write_report()
 
 
@@ -714,12 +725,15 @@ def write_report() -> None:
             md_table(transposed),
             "",
         ]
-    rw_path = RESULTS_DIR / "rewrite_summary.csv"
-    if rw_path.exists():
-        meta_path = RESULTS_DIR / "rewrite_meta.json"
+    rewrite_runs = sorted(RESULTS_DIR.glob("rewrite_summary_*.csv"))
+    if rewrite_runs:
+        parts += ["## Follow-up and Arabic questions", ""]
+    for rw_path in rewrite_runs:
+        tag = rw_path.stem.removeprefix("rewrite_summary_")
+        meta_path = RESULTS_DIR / f"rewrite_meta_{tag}.json"
         meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         parts += [
-            "## Follow-up and Arabic questions",
+            f"### {meta.get('llm', tag)}",
             "",
             f"Run {meta.get('date', '?')}. Rewriting with {meta.get('llm', '?')}; retrieval with the "
             f"{meta.get('reranker', '?')} reranker and the {meta.get('rerank_gate', '?')} gate, evidence cutoff "

@@ -130,25 +130,27 @@ Last run 2026-11-05. Default chunking, top-k 5; rerankers rescore the 20 best em
 * **unanswerable_abstention_rate**: unanswerable questions correctly answered with 'insufficient evidence'.
 * **correctness / faithfulness**: LLM-judge scores (see README for caveats); absent when no judge was used.
 
-| metric | extractive / none (cutoff 0.3) | ollama / llama3.1:8b (cutoff 0.3) | ollama / llama3.1:8b + laya reranker | ollama / llama3.1:8b + ms-marco reranker | ollama / llama3.1:8b + ms-marco reranker + laya gate |
-|---|---|---|---|---|---|
-| judge | none | none | none | none | none |
-| date | 2026-11-02 | 2026-11-02 | 2026-11-04 | 2026-11-04 | 2026-11-05 |
-| questions | 31 | 31 | 31 | 31 | 31 |
-| errors | 0 | 0 | 0 | 0 | 0 |
-| page_hit@k | 0.963 | 0.963 | 0.963 | 0.963 | 0.963 |
-| answers_with_citation | 1.000 | 1.000 | 0.926 | 0.963 | 0.963 |
-| citation_precision | 0.531 | 0.619 | 0.737 | 0.783 | 0.746 |
-| answers_citing_evidence_page | 0.852 | 0.926 | 0.889 | 0.926 | 0.926 |
-| invalid_citation_ids | 0 | 0 | 0 | 0 | 0 |
-| false_abstention_rate | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
-| unanswerable_abstention_rate | 0.500 | 1.000 | 1.000 | 1.000 | 1.000 |
-| retrieval_ms_p50 | 3.954 | 124.386 | 7497.691 | 506.426 | 1465.354 |
-| generation_s_p50 | nan | 9.627 | 37.810 | 39.444 | 15.802 |
-| generation_s_p95 | nan | 21.349 | 52.965 | 51.427 | 25.226 |
-| truncated_answers | 0 | 0 | 0 | 0 | 0 |
+| metric | extractive / none (cutoff 0.3) | ollama / llama3.1:8b (cutoff 0.3) | ollama / llama3.1:8b + laya reranker | ollama / llama3.1:8b + ms-marco reranker | ollama / llama3.1:8b + ms-marco reranker + laya gate | ollama / qwen3.5:9b + ms-marco reranker + laya gate |
+|---|---|---|---|---|---|---|
+| judge | none | none | none | none | none | none |
+| date | 2026-11-02 | 2026-11-02 | 2026-11-04 | 2026-11-04 | 2026-11-05 | 2026-11-06 |
+| questions | 31 | 31 | 31 | 31 | 31 | 31 |
+| errors | 0 | 0 | 0 | 0 | 0 | 0 |
+| page_hit@k | 0.963 | 0.963 | 0.963 | 0.963 | 0.963 | 0.963 |
+| answers_with_citation | 1.000 | 1.000 | 0.926 | 0.963 | 0.963 | 1.000 |
+| citation_precision | 0.531 | 0.619 | 0.737 | 0.783 | 0.746 | 0.771 |
+| answers_citing_evidence_page | 0.852 | 0.926 | 0.889 | 0.926 | 0.926 | 0.963 |
+| invalid_citation_ids | 0 | 0 | 0 | 0 | 0 | 0 |
+| false_abstention_rate | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| unanswerable_abstention_rate | 0.500 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| retrieval_ms_p50 | 3.954 | 124.386 | 7497.691 | 506.426 | 1465.354 | 1190.805 |
+| generation_s_p50 | nan | 9.627 | 37.810 | 39.444 | 15.802 | 12.101 |
+| generation_s_p95 | nan | 21.349 | 52.965 | 51.427 | 25.226 | 20.508 |
+| truncated_answers | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Follow-up and Arabic questions
+
+### ollama/llama3.1:8b
 
 Run 2026-11-05. Rewriting with ollama/llama3.1:8b; retrieval with the ms-marco reranker and the laya gate, evidence cutoff 0.35. All four papers are searched (no paper filter).
 
@@ -165,3 +167,21 @@ Run 2026-11-05. Rewriting with ollama/llama3.1:8b; retrieval with the ms-marco r
 | arabic | rewritten | 12 | 1.000 | 0.917 | 12.000 | 4 | 4.000 | 1.825 |  |  |  |  |  |  |
 | arabic | rewritten after a turn about another paper | 11 | 1.000 | 0.955 | 11.000 | 0 |  |  | 1.000 |  |  |  |  |  |
 | arabic | answers by llama3.1:8b | 12 |  |  |  | 4 | 4.000 |  |  | 11.000 | 11.000 | 9.000 | 0.741 | 0.000 |
+
+### ollama/qwen3.5:9b
+
+Run 2026-11-06. Rewriting with ollama/qwen3.5:9b; retrieval with the ms-marco reranker and the laya gate, evidence cutoff 0.35. All four papers are searched (no paper filter).
+
+* **follow_up**: the 15 short questions, each after a first turn about the same paper. *as written* searches the short question alone; *rewritten* searches the standalone query the LLM produced from the conversation.
+* **arabic**: 16 Arabic translations (12 answerable, 4 unanswerable) of questions in the main set, searched as written, after rewriting into English, and (for reference) with the original English question. *rewritten after a turn about another paper* checks that conversation history does not replace the topic the question names (single-paper questions only).
+* **answerable_passed**: answerable questions that cleared the evidence check; **unanswerable_refused**: unanswerable questions that did not.
+
+| set | variant | answerable | page_hit@5 | MRR | answerable_passed | unanswerable | unanswerable_refused | rewrite_s_p50 | page_hit@5_without_turn | answered | answered_in_arabic | answers_with_citation | citation_precision | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| follow_up | as written | 15 | 0.333 | 0.144 | 15.000 | 0 |  |  |  |  |  |  |  |  |
+| follow_up | rewritten | 15 | 0.667 | 0.550 | 14.000 | 0 |  | 2.298 |  |  |  |  |  |  |
+| arabic | English original | 12 | 1.000 | 0.944 | 12.000 | 4 | 4.000 |  |  |  |  |  |  |  |
+| arabic | as written | 12 | 0.000 | 0.000 | 9.000 | 4 | 1.000 |  |  |  |  |  |  |  |
+| arabic | rewritten | 12 | 1.000 | 0.917 | 11.000 | 4 | 3.000 | 2.130 |  |  |  |  |  |  |
+| arabic | rewritten after a turn about another paper | 11 | 1.000 | 0.909 | 10.000 | 0 |  |  | 1.000 |  |  |  |  |  |
+| arabic | answers by qwen3.5:9b | 12 |  |  |  | 4 | 4.000 |  |  | 11.000 | 11.000 | 11.000 | 0.735 | 0.000 |

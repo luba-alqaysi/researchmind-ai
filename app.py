@@ -309,7 +309,7 @@ def main() -> None:
     with compare:
         compare_tab(pipeline, settings, opts)
     with bench:
-        benchmarks.render()
+        benchmarks.render(settings.ollama_model)
 
 
 main()
