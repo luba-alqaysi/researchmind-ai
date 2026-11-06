@@ -129,3 +129,26 @@ def test_ollama_context_grows_with_prompt_so_evidence_is_not_truncated():
     size = client.context_size("s" * 3000, big)
     assert size >= (3000 + len(big)) // 3 + 2000 and size % 2048 == 0
     assert client.context_size("s", "x" * 10_000_000) == 32768
+
+
+def test_ollama_turns_thinking_off_by_default():
+    payload = {"message": {"content": "Answer [S1]."}, "done_reason": "stop"}
+    with patch("src.llm_client.requests.post", return_value=_response(200, payload)) as post:
+        OllamaClient(SETTINGS).generate("sys", "user")
+    assert post.call_args.kwargs["json"]["think"] is False
+    with patch("src.llm_client.requests.post", return_value=_response(200, payload)) as post:
+        OllamaClient(SETTINGS.with_overrides(ollama_think=True)).generate("sys", "user")
+    assert post.call_args.kwargs["json"]["think"] is True
+
+
+def test_ollama_retries_without_think_for_models_that_reject_it():
+    ok = _response(200, {"message": {"content": "Answer [S1]."}, "done_reason": "stop"})
+    rejected = _response(400, text='{"error":"\\"llama3.1:8b\\" does not support thinking"}')
+    with patch("src.llm_client.requests.post", side_effect=[rejected, ok]) as post:
+        result = OllamaClient(SETTINGS).generate("sys", "user")
+    assert result.text == "Answer [S1]." and post.call_count == 2
+    assert "think" not in post.call_args_list[1].kwargs["json"]
+
+
+def test_default_model_is_qwen():
+    assert Settings().ollama_model == "qwen3.5:9b" and Settings().ollama_think is False

@@ -78,6 +78,7 @@ class OllamaClient:
         self.temperature = settings.llm_temperature
         self.max_tokens = settings.llm_max_tokens
         self.timeout = settings.llm_timeout_seconds
+        self.think = settings.ollama_think
 
     def context_size(self, system: str, user: str) -> int:
         """Context window large enough for the prompt plus the answer.
@@ -100,9 +101,14 @@ class OllamaClient:
                 "num_ctx": self.context_size(system, user),
                 "num_predict": self.max_tokens,
             },
+            "think": self.think,
         }
         try:
             response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            if response.status_code == 400 and "think" in response.text.lower():
+                # Models without a thinking mode reject the option; ask again without it.
+                payload.pop("think")
+                response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         except requests.exceptions.Timeout as exc:
             raise LLMConnectionError(
                 f"Ollama did not respond within {self.timeout}s. The model may still be loading; try again."

@@ -31,8 +31,11 @@ class Settings:
     # LLM
     llm_provider: str = "ollama"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "qwen3.5:9b"
     ollama_num_ctx: int = 8192
+    # Reasoning ("thinking") models such as Qwen3.5 think step by step before answering. Off by default:
+    # the answer is grounded in retrieved passages, and thinking makes each answer several times slower.
+    ollama_think: bool = False
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     anthropic_api_key: str = ""
@@ -76,6 +79,7 @@ class Settings:
             ollama_base_url=_get("OLLAMA_BASE_URL", d.ollama_base_url).rstrip("/"),
             ollama_model=_get("OLLAMA_MODEL", d.ollama_model),
             ollama_num_ctx=int(_get("OLLAMA_NUM_CTX", str(d.ollama_num_ctx))),
+            ollama_think=_get_bool("OLLAMA_THINK", d.ollama_think),
             gemini_api_key=_get("GEMINI_API_KEY", ""),
             gemini_model=_get("GEMINI_MODEL", d.gemini_model),
             anthropic_api_key=_get("ANTHROPIC_API_KEY", ""),
