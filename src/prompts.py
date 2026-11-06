@@ -105,6 +105,15 @@ Rules:
 5. Reply with JSON only, in this form: {"search_query": "..."}"""
 
 
+TRANSLATE_SYSTEM_PROMPT = """You translate a question about research papers into English, as a search query.
+Keep technical terms, gene names, numbers and paper names exactly. Do not answer the question.
+Reply with JSON only, in this form: {"search_query": "..."}"""
+
+
+def build_translate_prompt(text: str) -> str:
+    return f"Question: {text.strip()}\n\nJSON:"
+
+
 def build_rewrite_prompt(question: str, history: list[tuple[str, str]], max_answer_chars: int = 400) -> str:
     turns = []
     for q, a in history:

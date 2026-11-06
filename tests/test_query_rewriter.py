@@ -45,8 +45,22 @@ def test_rewrite_falls_back_on_errors_and_non_english_output():
 
     r = rewrite_query("ما حجم العينة؟", None, Failing())
     assert r.query == "ما حجم العينة؟" and not r.rewritten and r.error
-    r = rewrite_query("ما حجم العينة؟", None, ScriptedLLM('{"search_query": "ما حجم العينة"}'))
-    assert not r.rewritten and r.error == "unusable rewrite"
+    still_arabic = ScriptedLLM('{"search_query": "ما حجم العينة"}', '{"search_query": "ما حجم العينة"}')
+    r = rewrite_query("ما حجم العينة؟", None, still_arabic)
+    assert not r.rewritten and r.error == "unusable rewrite" and len(still_arabic.calls) == 2
+
+
+def test_untranslated_rewrite_is_sent_back_once_for_translation():
+    llm = ScriptedLLM('{"search_query": "ما حجم العينة في دراسة تأثيرات المجموعات؟"}',
+                      '{"search_query": "sample size of the cohort effects study"}')
+    r = rewrite_query("وما حجم العينة؟", [("ما هي دراسة تأثيرات المجموعات؟", "...")], llm)
+    assert r.rewritten and r.query == "sample size of the cohort effects study"
+    assert len(llm.calls) == 2 and "ما حجم العينة في دراسة تأثيرات المجموعات" in llm.calls[1][1]
+
+
+def test_english_rewrite_needs_no_second_call():
+    llm = ScriptedLLM('{"search_query": "sample size of the cohort effects study"}')
+    assert rewrite_query("ما حجم العينة؟", None, llm).rewritten and len(llm.calls) == 1
 
 
 def test_arabic_question_is_searched_in_english_and_answered_in_arabic(docs):  # noqa: F811

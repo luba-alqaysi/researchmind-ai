@@ -7,7 +7,9 @@ English search query. The answer is still written in the user's language.
 
 Rewriting costs one extra LLM call, so it runs only when it can help: when the
 question is not in English or when there is earlier conversation. Any failure
-falls back to the original question.
+falls back to the original question. Some models (seen with Qwen3.5 9B) sometimes
+return the rewritten question still in Arabic; that reply is sent back once with a
+plain "translate this" request before giving up.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from src.prompts import REWRITE_SYSTEM_PROMPT, build_rewrite_prompt
+from src.prompts import REWRITE_SYSTEM_PROMPT, TRANSLATE_SYSTEM_PROMPT, build_rewrite_prompt, build_translate_prompt
 
 _ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 _JSON = re.compile(r"\{.*?\}", re.S)
@@ -62,8 +64,15 @@ def rewrite_query(question: str, history: list[tuple[str, str]] | None, llm) -> 
         response = llm.generate(REWRITE_SYSTEM_PROMPT, build_rewrite_prompt(question, history or []))
     except Exception as exc:  # the answer step reports LLM errors; here we only fall back
         return Rewrite(question, False, (time.perf_counter() - t0) * 1000, error=str(exc))
-    ms = (time.perf_counter() - t0) * 1000
     query = parse_query(response.text)
+    if query is not None and detect_language(query) != "en":
+        # The model resolved the question but did not translate it: ask once for a translation only.
+        try:
+            retry = llm.generate(TRANSLATE_SYSTEM_PROMPT, build_translate_prompt(query))
+            query = parse_query(retry.text)
+        except Exception:
+            query = None
+    ms = (time.perf_counter() - t0) * 1000
     if query is None or detect_language(query) != "en":
         return Rewrite(question, False, ms, error="unusable rewrite")
     return Rewrite(query, query != question.strip(), ms)
